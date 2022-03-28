@@ -1,0 +1,980 @@
+---
+title: "SNAPL_Full_Workflow"
+author: "Henry Holm"
+date: "2/9/2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+---
+title: "SNAPL_Science_Temp_2021"
+author: "Henry_Holm"
+date: "3/23/2021"
+output:
+  html_document: default
+  pdf_document: default
+editor_options: 
+  chunk_output_type: console
+---
+
+Load some Helper Functions and Libraries
+```{r Helper Functions}
+# Load Libraries
+library(ggplot2)      #plotting
+library(ggpubr)       #graph themes
+library(cowplot)      #graph themes
+library(gridExtra)    #more plotting
+library(tidyr)        #data formatting
+library(dplyr)        #data formatting
+library(colorRamps)   #color for plotting
+library(colorspace)   #more colors
+library(RColorBrewer) #more colors
+library(readr)        #reading csv files
+library(ggpval)       #calculating p-values
+library(Hmisc)        #graphics
+library(oceanmap)     #ocean mapping
+library(viridis)      #colors
+library(rnaturalearth)     #map data
+library(rnaturalearthdata) #more map data
+
+# See the top left of a data frame
+tl <- function(x){
+  x[1:20,1:20]
+}
+
+# Function to calculate the number the average number of double bounds in a sample
+NumDB <- function(data, lipid, class = NA) {
+
+  # subset to only correct molecule class
+  if (any(!is.na(class))) {
+    onlyspecies <- lipid[which(data$species %in% class), ]
+  } else {
+    onlyspecies <- lipid
+  }
+
+  # sum the columns, divide each value by the column sum, and make a matrix of percents
+  mtrxpercent <- t(t(onlyspecies) / rowSums(t(onlyspecies)))
+  dfpercent <- as.data.frame(mtrxpercent)
+
+  # Add the db values back in.
+  if (any(!is.na(class))) {
+    dfpercent$FA_total_no_DB <- data[which(data$species %in% class), "FA_total_no_DB"]
+    dfpercent$sp <- data[which(data$species %in% class), "species"]
+    dfpercent[which(dfpercent$sp != "TAG"), "FA_total_no_DB"] <- dfpercent[which(dfpercent$sp != "TAG"), "FA_total_no_DB"] / 2
+    dfpercent[which(dfpercent$sp == "TAG"), "FA_total_no_DB"] <- dfpercent[which(dfpercent$sp == "TAG"), "FA_total_no_DB"] / 3
+    dfpercent$sp <- NULL
+  } else {
+    dfpercent$FA_total_no_DB <- data[, "FA_total_no_DB"]
+    dfpercent$FA_total_no_DB <- data[, "species"]
+    dfpercent[which(dfpercent$sp != "TAG"), "FA_total_no_DB"] <- dfpercent[which(dfpercent$sp != "TAG"), "FA_total_no_DB"] / 2
+    dfpercent[which(dfpercent$sp == "TAG"), "FA_total_no_DB"] <- dfpercent[which(dfpercent$sp == "TAG"), "FA_total_no_DB"] / 3
+    dfpercent$sp <- NULL
+  }
+
+  # Now a for loop to sum our percents with same DBs
+  # First make a storage frame
+  dbs <- unique(dfpercent$FA_total_no_DB)
+  storage <- data.frame(matrix(nrow = (ncol(dfpercent)), ncol = length(dbs)))
+
+  for (j in 1:length(dbs)) {
+    summed <- as.data.frame(colSums(dfpercent[which(dfpercent[, "FA_total_no_DB"] == dbs[j]), ]))
+    summed["FA_total_no_DB", ] <- dbs[j]
+    colnames(summed) <- dbs[j]
+    storage[, j] <- summed
+    colnames(storage)[j] <- dbs[j]
+    row.names(storage) <- row.names(summed)
+  }
+
+  # calculate the weighted average for each sample (applyed by row)
+  dbaverage <- apply(storage, 2, function(x) {
+    x * x["FA_total_no_DB"]
+  })
+  
+  storage$dbaverage <- rowSums(dbaverage)
+
+  # All set. Return the dataframe
+  return(storage)
+}
+
+```
+
+TAG Correction Functions
+```{r}
+# Read data
+df <- read.csv("C:/Users/henryholm/OneDrive - Woods Hole Oceanographic Institution/Desktop/SNAPL/SNAPL Simplified Dataset/Data/csv/Joined/Holm_TAG_Curve_Compare.csv")
+
+data <- data.frame(x = df$ECN_hen, y = (df$slope_hen*0.02)) 
+# slopes were for ng/ml, changed to pgOC by 1000 (pg/ng)*(1ml/1000ul)*20(ul)=0.02
+
+# Model the first half with a quadratic
+mod2 <- lm(y~x+I(x^2)+I(x^3)+I(x^4), data=data[1:7,])
+cofs2 <- mod2$coefficients
+
+# Model the second half with a quadratic
+mod1 <- lm(y~x+I(x^2)+I(x^3)+I(x^4), data=data[7:12,])
+cofs1 <- mod1$coefficients
+
+# Combine models
+tag_fit <- function(x) {
+  as.numeric(
+    lapply(x, function(x) {
+      if (x < 42) {
+        cofs2[1] + cofs2[2] * x + cofs2[3] * x^2 + cofs2[4] * x^3 + cofs2[5] * x^4
+      } else {
+        cofs1[1] + cofs1[2] * x + cofs1[3] * x^2 + cofs1[4] * x^3 + cofs1[5] * x^4
+      }
+    })
+  )
+}
+```
+
+Load Atlantic Data and Metadata
+```{r}
+# Load SNAPL Metadata
+SNAPL_metadata <- read.csv("C:/Users/henryholm/OneDrive - Woods Hole Oceanographic Institution/Desktop/SNAPL/SNAPL Simplified Dataset/Data/csv/unjoined_PA_data/Atlantic/Holm_NA_screen_metadata.csv") #win
+SNAPL_metadata <- SNAPL_metadata[1:553, ] # Cut Four Blank rows
+
+# Ammend some time data
+collect_time_UTC <- strptime(SNAPL_metadata[, "collect_time_UTC"],
+  format = "%m/%d/%y %H:%M", tz = "UTC"
+)
+
+# Load Lipid Data
+SNAPL <- read.csv("C:/Users/henryholm/OneDrive - Woods Hole Oceanographic Institution/Desktop/SNAPL/SNAPL Simplified Dataset/Data/csv/unjoined_PA_data/Atlantic/Holm_NA_screen.csv") #win
+
+# add adduct summary
+SNAPL <- LOBtools::LOB_adduct_summary(SNAPL)
+
+# Insure any isomeric compounds have unique names
+SNAPL$match_ID <- make.unique(names = as.character(SNAPL$match_ID), sep = "_")
+SNAPL$compound_name <- make.unique(names = as.character(SNAPL$compound_name), sep = "_")
+
+# Remove some samples that had low response due too a blocked needle.
+drop_SNAPL <- c("KN207.1_A289_QE002278.mzXML", "KN207.1_A290_QE002277.mzXML", "KN207.1_A295_QE002286.mzXML", "KN207.1_A296_QE002285.mzXML", "KN207.1_A297_QE002284.mzXML", "KN207.1_A298_QE002283.mzXML", "KN207.1_A299_QE002280.mzXML", "KN207.1_A300_QE002279.mzXML", "KN207.1_A301_QE002287.mzXML", "KN207.1_A302_QE002289.mzXML", "KN207.1_A303_QE002290.mzXML", "KN207.1_A304_QE002291.mzXML", "KN207.1_A305_QE002292.mzXML", "KN207.1_A306_QE002293.mzXML", "KN207.1_A307_QE002302.mzXML", "KN207.1_A308_QE002299.mzXML", "KN207.1_A309_QE002298.mzXML", "KN207.1_A310_QE002297.mzXML", "KN207.1_A311_QE002296.mzXML", "KN207.1_A312_QE002295.mzXML", "KN207.1_A313_QE002303.mzXML",
+"AE1319_A739_QE001831.mzXML",	"AE1319_A7699_A699_QE001837.mzXML",	"KN210.4_A745blank_QE002094.mzXML")
+
+SNAPL <- SNAPL[,-which(colnames(SNAPL) %in% drop_SNAPL)]
+SNAPL_metadata <- SNAPL_metadata[-which(SNAPL_metadata$name %in% sub(x = drop_SNAPL,".mzXML","")),]
+
+# Just lipids columns
+SNAPL_lipid <- SNAPL[, which(grepl(pattern = "QE00", colnames(SNAPL)))]
+
+# TAG ECN correction
+TAG <- SNAPL[which(SNAPL$species == "TAG"),]
+TAG_ECN <- TAG$FA_total_no_C - (2*(TAG$FA_total_no_DB))
+TAG_RF <- tag_fit(TAG_ECN)
+
+#check that none of these are negative 
+if (any(TAG_RF < 0)) {stop("Correction Error")}
+
+# Scale peaks using PA/pgOC response factors
+SNAPL_lipid[which(SNAPL$species == "DGDG"),] <- SNAPL_lipid[which(SNAPL$species == "DGDG"),]/16232.00
+SNAPL_lipid[which(SNAPL$species == "MGDG"),] <- SNAPL_lipid[which(SNAPL$species == "MGDG"),]/99125.00
+SNAPL_lipid[which(SNAPL$species == "GADG"),] <- SNAPL_lipid[which(SNAPL$species == "GADG"),]/99125.00
+SNAPL_lipid[which(SNAPL$species == "PC"),] <- SNAPL_lipid[which(SNAPL$species == "PC"),]/131852.60
+SNAPL_lipid[which(SNAPL$species == "PE"),] <- SNAPL_lipid[which(SNAPL$species == "PE"),]/71517.07
+SNAPL_lipid[which(SNAPL$species == "PG"),] <- SNAPL_lipid[which(SNAPL$species == "PG"),]/61195.00
+SNAPL_lipid[which(SNAPL$species == "SQDG"),] <- SNAPL_lipid[which(SNAPL$species == "SQDG"),]/31193.00
+SNAPL_lipid[which(SNAPL$species == "DGTS_DGTA"),] <- SNAPL_lipid[which(SNAPL$species == "DGTS_DGTA"),]/257151.91
+SNAPL_lipid[which(SNAPL$species == "DGCC"),] <- SNAPL_lipid[which(SNAPL$species == "DGCC"),]/257151.91
+SNAPL_lipid[which(SNAPL$species == "TAG"),] <- SNAPL_lipid[which(SNAPL$species == "TAG"),]/TAG_RF
+
+# calculate the average double bonds
+species <- c("TAG", "PC", "PE", "PG", "SQDG", "MGDG", "DGDG", "DGTS_DGTA", "DGCC", "GADG")
+
+for (i in 1:length(species)) {
+  class <- species[[i]]
+  lipid_db <- NumDB(SNAPL, SNAPL_lipid, class = class)
+  data.frame(SNAPL_metadata$name, rownames(lipid_db[1:529, ]))
+  SNAPL_metadata[, paste(class, "db_ave", sep = "_")] <- lipid_db[1:529, "dbaverage"]
+}
+
+# Add the average of all lipids (RF corrected % used)
+classes <- c("DGCC", "DGTS_DGTA", "PC", "PE", "PG", "SQDG", "MGDG", "DGDG","GADG", "TAG")
+SNAPL_metadata$all_db_ave <- NumDB(SNAPL, SNAPL_lipid, classes)[-(nrow(SNAPL_metadata) + 1), "dbaverage"]
+
+# Add the average of all the membrane lipids (RF corrected % used)
+classes <- c("DGCC", "DGTS_DGTA", "PC", "PE", "PG", "SQDG", "MGDG", "DGDG")
+SNAPL_metadata$allmem_db_ave <- NumDB(SNAPL, SNAPL_lipid, classes)[-(nrow(SNAPL_metadata) + 1), "dbaverage"]
+
+# Add the SQDG+PG average
+classes <- c("PC", "DGCC")
+SNAPL_metadata$SQDG_PG_db_ave <- NumDB(SNAPL, SNAPL_lipid, classes)[-(nrow(SNAPL_metadata) + 1), "dbaverage"]
+
+# Subset the metadata that we want to join
+SNAPL_metadata_toJoin <- SNAPL_metadata[, c(
+"name", "lat", "long","collect_time_UTC","cruise","depth","temp_CTD","salinity_CTD", "PO4_combined","NO3_NO2_combined","fluor","PAR_uE", "TAG_db_ave", "PC_db_ave", "PE_db_ave", "PG_db_ave","SQDG_db_ave", "MGDG_db_ave", "DGDG_db_ave", "DGTS_DGTA_db_ave", "DGCC_db_ave","all_db_ave", "allmem_db_ave", "SQDG_PG_db_ave", "GADG_db_ave","ctd"
+)]
+
+# add a column for the presence in the mixed layer
+SNAPL_metadata_toJoin[which(SNAPL_metadata_toJoin$depth <= SNAPL_metadata$Crit_3), "Mixed_Layer"] <- TRUE
+
+SNAPL_metadata_toJoin$collect_time_UTC <- as.POSIXct(SNAPL_metadata_toJoin$collect_time_UTC,format = "%m/%d/%Y %H:%M",tz = "UTC")
+
+# Reformat column names
+colnames(SNAPL_metadata_toJoin) <- c(
+  "name", "lat", "long","date_time","cruise", "depth", "temp","salinity", "PO4",
+  "NO2_NO3","fluorescence","PAR","TAG_db_ave", "PC_db_ave", "PE_db_ave", "PG_db_ave",
+  "SQDG_db_ave", "MGDG_db_ave", "DGDG_db_ave", "DGTS_DGTA_db_ave", "DGCC_db_ave",
+  "all_db_ave", "allmem_db_ave", "SQDG_PG_db_ave", "GADG_db_ave","CTD","Mixed_Layer")
+
+```
+
+Load EXPORTS Data and Metadata
+```{r}
+#Load EXPORTS lipid data and metadata
+EXPORTS <- read.csv("C:/Users/henryholm/OneDrive - Woods Hole Oceanographic Institution/Desktop/SNAPL/SNAPL Simplified Dataset/Data/csv/unjoined_PA_data/EXPORTS/Holm_EXPORT_screen.csv") #win
+#bottle_files <- read.csv("C:/Users/henryholm/OneDrive - Woods Hole Oceanographic Institution/Desktop/SNAPL/SNAPL Simplified Dataset/Data/csv/unjoined_PA_data/EXPORTS/RogerRevelleSIOBottleFiles_v6_HH.csv",header = TRUE) #win
+bottle_files <- read.csv("H:/EXPORTS/Pacific_2018/Main_Sheets/RogerRevelleSIOBottleFiles_v6_HH.csv",header = TRUE)
+metadata_lipid <- read.csv("C:/Users/henryholm/OneDrive - Woods Hole Oceanographic Institution/Desktop/SNAPL/SNAPL Simplified Dataset/Data/csv/unjoined_PA_data/EXPORTS/Holm_EXPORTS_screen_metadata.csv") #win
+
+EXPORTS <- LOBtools::LOB_adduct_summary(EXPORTS)
+
+# Insure unique compound names
+EXPORTS$compound_name <- make.unique(names = as.character(EXPORTS$compound_name), sep = "_")
+
+#Create a column to link lipid and metadata
+bottle_files$link <- paste(bottle_files$Cast,"_",bottle_files$BottleNo,sep = "")
+metadata_lipid$link <- paste(metadata_lipid$Cast_Number_SIO,"_",metadata_lipid$Bottle_Number,sep = "")
+
+#Match them
+bottle_match <- bottle_files[which(bottle_files$link %in% metadata_lipid$link),]
+bottle_match <- bottle_match[order(bottle_match$link),]
+bottle_match <- rbind(bottle_match[which(bottle_match$link == "79_19"),],bottle_match) #dup row for extra sample
+bottle_match <- bottle_match[order(bottle_match$link),]
+
+#isolate just CTD samples and 10 blanks 
+metadata_match <- metadata_lipid[order(metadata_lipid$link),]
+metadata_match <- metadata_match[c(34:316,1:9),]
+
+#add 10 blank rows for blanks on bottle data
+bottle_match[nrow(bottle_match):nrow(bottle_match)+10,] <- NA
+
+#Check things line up
+data.frame(metadata_match$link,bottle_match$link) #check
+
+#Create a EXPORTS just lipid and matching metadata Files
+EXPORTS_metadata <- cbind(metadata_match[,-ncol(metadata_match)],bottle_match[,-ncol(bottle_match)])
+colnames(EXPORTS_metadata)[1] <- "File_Name"
+EXPORTS_metadata <- EXPORTS_metadata[order(EXPORTS_metadata$File_Name),]
+
+EXPORTS_lipid <- EXPORTS[,which(grepl(pattern = "QE00", colnames(EXPORTS)))]
+rownames(EXPORTS_lipid) <- make.unique(as.character(EXPORTS$compound_name),sep = "_")
+EXPORTS_lipid <- EXPORTS_lipid[,which(colnames(EXPORTS_lipid) %in% EXPORTS_metadata$File_Name)]
+EXPORTS_lipid <- EXPORTS_lipid[,order(colnames(EXPORTS_lipid))]
+
+EXPORTS_metadata <- EXPORTS_metadata[order(EXPORTS_metadata$File_Name),]
+
+#Check things line up
+data.frame(EXPORTS_metadata$File_Name,colnames(EXPORTS_lipid))
+
+# TAG ECN correction
+TAG <- EXPORTS[which(EXPORTS$species == "TAG"),]
+TAG_ECN <- TAG$FA_total_no_C - (2*(TAG$FA_total_no_DB))
+TAG_RF <- tag_fit(TAG_ECN)
+
+#check that none of these are negative 
+if (any(TAG_RF < 0)) {stop("Correction Error")}
+
+# Scale peaks using PA/pgOC response factors
+EXPORTS_lipid[which(EXPORTS$species == "DGDG"),] <- EXPORTS_lipid[which(EXPORTS$species == "DGDG"),]/16232.00
+EXPORTS_lipid[which(EXPORTS$species == "MGDG"),] <- EXPORTS_lipid[which(EXPORTS$species == "MGDG"),]/99125.00
+EXPORTS_lipid[which(EXPORTS$species == "GADG"),] <- EXPORTS_lipid[which(EXPORTS$species == "GADG"),]/99125.00
+EXPORTS_lipid[which(EXPORTS$species == "PC"),] <- EXPORTS_lipid[which(EXPORTS$species == "PC"),]/131852.60
+EXPORTS_lipid[which(EXPORTS$species == "PE"),] <- EXPORTS_lipid[which(EXPORTS$species == "PE"),]/71517.07
+EXPORTS_lipid[which(EXPORTS$species == "PG"),] <- EXPORTS_lipid[which(EXPORTS$species == "PG"),]/61195.00
+EXPORTS_lipid[which(EXPORTS$species == "SQDG"),] <- EXPORTS_lipid[which(EXPORTS$species == "SQDG"),]/31193.00
+EXPORTS_lipid[which(EXPORTS$species == "DGTS_DGTA"),] <- EXPORTS_lipid[which(EXPORTS$species == "DGTS_DGTA"),]/257151.91
+EXPORTS_lipid[which(EXPORTS$species == "DGCC"),] <- EXPORTS_lipid[which(EXPORTS$species == "DGCC"),]/257151.91
+EXPORTS_lipid[which(EXPORTS$species == "TAG"),] <- EXPORTS_lipid[which(EXPORTS$species == "TAG"),]/TAG_RF
+
+# calculate the double bond averages per sample 
+species <- c("TAG","PC","PE","PG","SQDG","MGDG","DGDG","DGTS_DGTA","DGCC","GADG")
+
+for (i in 1:length(species)) {
+  class <- species[[i]]
+  lipid_db<- NumDB(EXPORTS,EXPORTS_lipid,class = class)
+  data.frame(EXPORTS_metadata$File_Name,rownames(lipid_db[1:292,]))
+  EXPORTS_metadata[,paste(class,"db_ave",sep = "_")] <- lipid_db[1:292,"dbaverage"]
+}
+
+classes <- c("DGCC","DGTS_DGTA","PC","PE","PG","SQDG","MGDG","DGDG","TAG")
+EXPORTS_metadata$all_db_ave <- NumDB(EXPORTS,EXPORTS_lipid,classes)[-(nrow(EXPORTS_metadata)+1),"dbaverage"]
+
+classes <- c("DGCC","DGTS_DGTA","PC","PE","PG","SQDG","MGDG","DGDG")
+EXPORTS_metadata$allmem_db_ave <- NumDB(EXPORTS,EXPORTS_lipid,classes)[-(nrow(EXPORTS_metadata)+1),"dbaverage"]
+
+classes <- c("PC","DGCC")
+EXPORTS_metadata$SQDG_PG_db_ave <- NumDB(EXPORTS,EXPORTS_lipid,classes)[-(nrow(EXPORTS_metadata)+1),"dbaverage"]
+
+## Need to match Chla flr readings from same cast but measured on different bottles
+CHLA_match<- bottle_files
+CHLA_match$sdate_strptime <- as.POSIXct(CHLA_match$sdate,format = "%d/%m/%Y %H:%M", tz = "UTC")
+EXPORTS_metadata$Cast <- as.numeric(EXPORTS_metadata$Cast)
+
+for (i in 1:length(paste0(colnames(bottle_files),"_castMatch"))) {
+  EXPORTS_metadata[,paste0(colnames(bottle_files),"_castMatch")[i]] <- NA
+}
+
+#pair Hydroteam sampling 
+for (i in 1:length(names(table(EXPORTS_metadata$Cast)))) { # for every cast
+   cast_temp <- as.numeric(names(table(EXPORTS_metadata$Cast))[i]) # get current cast
+  for (j in 1:length(names(table(EXPORTS_metadata$depth_nominal)))) { #
+   depth_temp  <- EXPORTS_metadata[which(EXPORTS_metadata$Cast == cast_temp),][j,'depth_nominal']
+   CHLA_temp <- subset(bottle_files,Cast == cast_temp & depth_nominal == depth_temp)
+     if(any(CHLA_temp$CHLA != "-9999")){
+        EXPORTS_metadata[which(EXPORTS_metadata$Cast == cast_temp & EXPORTS_metadata$depth_nominal == depth_temp),(ncol(EXPORTS_metadata)-ncol(bottle_files)+1):(ncol(EXPORTS_metadata))] <- CHLA_temp[which(CHLA_temp$CHLA != "-9999"),]
+     }
+  }
+}
+
+# Create a metadata file to match SNAPL
+EXPORTS_metadata_toJoin <- EXPORTS_metadata[, c(
+  "File_Name", "Lat", "Lon", "sdate", "depth", "temp1", "sal1", "PO4", "NO2_NO3","CHLA_castMatch", "PAR",
+  "TAG_db_ave", "PC_db_ave", "PE_db_ave", "PG_db_ave", "SQDG_db_ave", "MGDG_db_ave", "DGDG_db_ave", "DGTS_DGTA_db_ave",
+  "DGCC_db_ave", "all_db_ave", "allmem_db_ave", "SQDG_PG_db_ave", "GADG_db_ave", "Cast"
+)]
+
+EXPORTS_metadata_toJoin$cruise <- "EXPORTS"
+EXPORTS_metadata$MLD_depth_crit3 <- as.numeric(as.character(EXPORTS_metadata$MLD_depth_crit3))
+EXPORTS_metadata_toJoin$depth <- as.numeric(as.character(EXPORTS_metadata_toJoin$depth))
+
+EXPORTS_metadata_toJoin[which(EXPORTS_metadata_toJoin$depth <= EXPORTS_metadata$MLD_depth_crit3),"Mixed_Layer"] <- TRUE
+
+colnames(EXPORTS_metadata_toJoin) <- c("name","lat","long","date_time","depth","temp","salinity","PO4","NO2_NO3",
+                                       "fluorescence","PAR","TAG_db_ave","PC_db_ave","PE_db_ave","PG_db_ave",
+                                       "SQDG_db_ave","MGDG_db_ave","DGDG_db_ave","DGTS_DGTA_db_ave",
+                                       "DGCC_db_ave","all_db_ave","allmem_db_ave","SQDG_PG_db_ave","GADG_db_ave","CTD",
+                                       "cruise","Mixed_Layer")
+
+# Make sure things are numeric
+EXPORTS_metadata_toJoin$lat <- as.numeric(as.character(EXPORTS_metadata_toJoin$lat))
+EXPORTS_metadata_toJoin$long <- as.numeric(as.character(EXPORTS_metadata_toJoin$long))
+EXPORTS_metadata_toJoin$depth <- as.numeric(as.character(EXPORTS_metadata_toJoin$depth))
+EXPORTS_metadata_toJoin$temp <- as.numeric(as.character(EXPORTS_metadata_toJoin$temp))
+EXPORTS_metadata_toJoin$PO4 <- as.numeric(as.character(EXPORTS_metadata_toJoin$PO4))
+EXPORTS_metadata_toJoin$NO2_NO3 <- as.numeric(as.character(EXPORTS_metadata_toJoin$NO2_NO3))
+EXPORTS_metadata_toJoin$fluorescence <- as.numeric(as.character(EXPORTS_metadata_toJoin$fluorescence))
+
+# format date_time
+EXPORTS_metadata_toJoin$date_time <- 
+       as.POSIXct(EXPORTS_metadata_toJoin[, "date_time"],
+                  tryFormat = "%d/%m/%Y %H:%M",
+                  tz = "UTC"
+                  )
+
+#Replace -9999 with NA for graphing
+EXPORTS_metadata_toJoin[which(EXPORTS_metadata_toJoin$PO4 == -9999),"PO4"] <- NA
+EXPORTS_metadata_toJoin[which(EXPORTS_metadata_toJoin$NO2_NO3 == -9999),"NO2_NO3"] <- NA
+
+#check column alignment
+data.frame(EXPORTS_metadata_toJoin$name,colnames(EXPORTS_lipid))
+
+```
+
+Load SCOPE Data and Metadata
+```{r}
+library(dplyr)
+
+# Load data
+SCOPE <- read.csv("C:/Users/henryholm/OneDrive - Woods Hole Oceanographic Institution/Desktop/SNAPL/SNAPL Simplified Dataset/Data/csv/unjoined_PA_data/SCOPE/Holm_SCOPE_screen.csv") #win
+SCOPE <- SCOPE[1:451,]
+SCOPE_metadata <- read.csv("C:/Users/henryholm/OneDrive - Woods Hole Oceanographic Institution/Desktop/SNAPL/SNAPL Simplified Dataset/Data/csv/unjoined_PA_data//SCOPE/Holm_SCOPE_metadata_screen.csv") #win
+
+# Insure unique compound names
+SCOPE$compound_name <- make.unique(names = as.character(SCOPE$compound_name), sep = "_")
+
+colnames(SCOPE_metadata)[1] <- "QE.File.Name"
+
+rownames(SCOPE) <- SCOPE$compound_name
+
+SCOPE <- SCOPE[, c(1:51, which(colnames(SCOPE) %in% as.character(SCOPE_metadata$QE.File.Name)))]
+
+SCOPE_lipid <- SCOPE[, which(grepl(pattern = "QE00", colnames(SCOPE)))]
+
+
+SCOPE_metadata <- SCOPE_metadata[order(SCOPE_metadata$QE.File.Name), ]
+
+# Check everything lines up
+data.frame(SCOPE$compound_name, rownames(SCOPE_lipid))
+data.frame(SCOPE_metadata$QE.File.Name, colnames(SCOPE_lipid))
+
+# TAG ECN correction
+TAG <- SCOPE[which(SCOPE$species == "TAG"), ]
+TAG_ECN <- TAG$FA_total_no_C - (2 * (TAG$FA_total_no_DB))
+TAG_RF <- tag_fit(TAG_ECN)
+
+#check that none of these are negative 
+if (any(TAG_RF < 0)) {stop("Correction Error")}
+
+# Scale peaks using PA/pgOC response factors
+SCOPE_lipid[which(SCOPE$species == "DGDG"),] <- SCOPE_lipid[which(SCOPE$species == "DGDG"),]/16232.00
+SCOPE_lipid[which(SCOPE$species == "MGDG"),] <- SCOPE_lipid[which(SCOPE$species == "MGDG"),]/99125.00
+SCOPE_lipid[which(SCOPE$species == "GADG"),] <- SCOPE_lipid[which(SCOPE$species == "GADG"),]/99125.00
+SCOPE_lipid[which(SCOPE$species == "PC"),] <- SCOPE_lipid[which(SCOPE$species == "PC"),]/131852.60
+SCOPE_lipid[which(SCOPE$species == "PE"),] <- SCOPE_lipid[which(SCOPE$species == "PE"),]/71517.07
+SCOPE_lipid[which(SCOPE$species == "PG"),] <- SCOPE_lipid[which(SCOPE$species == "PG"),]/61195.00
+SCOPE_lipid[which(SCOPE$species == "SQDG"),] <- SCOPE_lipid[which(SCOPE$species == "SQDG"),]/31193.00
+SCOPE_lipid[which(SCOPE$species == "DGTS_DGTA"),] <- SCOPE_lipid[which(SCOPE$species == "DGTS_DGTA"),]/257151.91
+SCOPE_lipid[which(SCOPE$species == "DGCC"),] <- SCOPE_lipid[which(SCOPE$species == "DGCC"),]/257151.91
+SCOPE_lipid[which(SCOPE$species == "TAG"),] <- SCOPE_lipid[which(SCOPE$species == "TAG"),]/TAG_RF
+
+# calculate the double bond averages per sample
+species <- c("TAG", "PC", "PE", "PG", "SQDG", "MGDG", "DGDG", "DGTS_DGTA", "DGCC","GADG")
+
+for (i in 1:length(species)) {
+  class <- species[[i]]
+  lipid_db <- NumDB(SCOPE, SCOPE_lipid, class = class)
+  data.frame(SCOPE_metadata$QE.File.Name, rownames(lipid_db[1:64, ]))
+  SCOPE_metadata[, paste(class, "db_ave", sep = "_")] <- lipid_db[1:64, "dbaverage"]
+}
+
+classes <- c("DGCC", "DGTS_DGTA", "PC", "PE", "PG", "SQDG", "MGDG", "DGDG", "TAG")
+SCOPE_metadata$all_db_ave <- NumDB(SCOPE, SCOPE_lipid, classes)[-(nrow(SCOPE_metadata) + 1), "dbaverage"]
+
+classes <- c("DGCC", "DGTS_DGTA", "PC", "PE", "PG", "SQDG", "MGDG", "DGDG")
+SCOPE_metadata$allmem_db_ave <- NumDB(SCOPE, SCOPE_lipid, classes)[-(nrow(SCOPE_metadata) + 1), "dbaverage"]
+
+classes <- c("PC", "DGCC")
+SCOPE_metadata$SQDG_PG_db_ave <- NumDB(SCOPE, SCOPE_lipid, classes)[-(nrow(SCOPE_metadata) + 1), "dbaverage"]
+
+# Create a metadata file to match others
+SCOPE_metadata_toJoin <- SCOPE_metadata[, c(
+  "QE.File.Name", "Latitude", "Longitude","Time", "Depth", "CTD_Temperature","CTD_Salinity", "PO4", "NO3.NO2","CTD_Chloropigment","TAG_db_ave", "PC_db_ave", "PE_db_ave", "PG_db_ave",
+  "SQDG_db_ave", "MGDG_db_ave", "DGDG_db_ave", "DGTS_DGTA_db_ave",
+  "DGCC_db_ave", "all_db_ave", "allmem_db_ave", "SQDG_PG_db_ave","GADG_db_ave", "In_Mixed_Layer","Cast"
+)]
+
+SCOPE_metadata_toJoin$cruise <- "SCOPE"
+SCOPE_metadata_toJoin$PAR <- NA #no par data
+
+colnames(SCOPE_metadata_toJoin) <- c(
+  "name", "lat", "long","date_time","depth", "temp", "salinity","PO4", "NO2_NO3",
+  "fluorescence", "TAG_db_ave", "PC_db_ave", "PE_db_ave", "PG_db_ave",
+  "SQDG_db_ave", "MGDG_db_ave", "DGDG_db_ave", "DGTS_DGTA_db_ave",
+  "DGCC_db_ave", "all_db_ave", "allmem_db_ave", "SQDG_PG_db_ave", "GADG_db_ave","Mixed_Layer","CTD","cruise","PAR"
+)
+
+SCOPE_metadata_toJoin$PO4 <- round(SCOPE_metadata_toJoin$PO4*1.024, digits = 2) # umol/kg * kg/L 
+SCOPE_metadata_toJoin$NO2_NO3 <- round(SCOPE_metadata_toJoin$NO2_NO3*1.024, digits = 2) # umol/kg * kg/L 
+
+SCOPE_metadata_toJoin$date_time <- as.POSIXct(SCOPE_metadata_toJoin[, "date_time"], format = "%Y-%m-%dT%H:%M:%S", tz = "UTC")
+
+```
+
+Load WAP Data and Metadata
+```{r}
+# Load data
+WAP <- read.csv("C:/Users/henryholm/OneDrive - Woods Hole Oceanographic Institution/Desktop/SNAPL/SNAPL Simplified Dataset/Data/csv/unjoined_PA_data/WAP/Holm_WAP_screen.csv") #win
+WAP_metadata <- read.csv("C:/Users/henryholm/OneDrive - Woods Hole Oceanographic Institution/Desktop/SNAPL/SNAPL Simplified Dataset/Data/csv/unjoined_PA_data/WAP/Holm_WAP_metadata_screen.csv") #win
+
+# Add adduct summary and add colnames
+WAP <- LOBtools::LOB_adduct_summary(WAP)
+colnames(WAP_metadata)[1] <- "QE.File.Name"
+
+# Insure unique compound names
+WAP$compound_name <- make.unique(names = as.character(WAP$compound_name), sep = "_")
+
+# Strike sample with labelling mix up, format
+WAP_metadata <- WAP_metadata[-which(WAP_metadata$QE.File.Name == "QE009547"),]
+WAP_metadata <- WAP_metadata[-which(WAP_metadata$QE.File.Name == "spilled"),]
+
+rownames(WAP) <- make.unique(WAP$compound_name)
+
+species <- WAP$species
+FA_total_no_C <- WAP$FA_total_no_C
+
+WAPnames <- paste0(as.character(WAP_metadata$QE.File.Name),".mzXML")
+
+WAP <- WAP[, c(1:21, which(colnames(WAP) %in% WAPnames))]
+
+WAP$species <- species
+WAP$FA_total_no_C <-  FA_total_no_C
+
+WAP_lipid <- WAP[, which(grepl(pattern = "QE0", colnames(WAP)))]
+
+WAP_metadata <- WAP_metadata[order(WAP_metadata$QE.File.Name), ]
+
+# Check everything lines up
+data.frame(WAP$compound_name, rownames(WAP_lipid))
+data.frame(WAP_metadata$QE.File.Name, colnames(WAP_lipid))
+
+# TAG ECN correction
+TAG <- WAP[which(WAP$species == "TAG"), ]
+TAG_ECN <- TAG$FA_total_no_C - (2 * (TAG$FA_total_no_DB))
+TAG_RF <- tag_fit(TAG_ECN)
+
+#check that none of these are negative 
+if (any(TAG_RF < 0)) {stop("Correction Error")}
+
+# Scale peaks using PA/pgOC response factors
+WAP_lipid[which(WAP$species == "DGDG"),] <- WAP_lipid[which(WAP$species == "DGDG"),]/16232.00
+WAP_lipid[which(WAP$species == "MGDG"),] <- WAP_lipid[which(WAP$species == "MGDG"),]/99125.00
+WAP_lipid[which(WAP$species == "GADG"),] <- WAP_lipid[which(WAP$species == "GADG"),]/99125.00
+WAP_lipid[which(WAP$species == "PC"),] <- WAP_lipid[which(WAP$species == "PC"),]/131852.60
+WAP_lipid[which(WAP$species == "PE"),] <- WAP_lipid[which(WAP$species == "PE"),]/71517.07
+WAP_lipid[which(WAP$species == "PG"),] <- WAP_lipid[which(WAP$species == "PG"),]/61195.00
+WAP_lipid[which(WAP$species == "SQDG"),] <- WAP_lipid[which(WAP$species == "SQDG"),]/31193.00
+WAP_lipid[which(WAP$species == "DGTS_DGTA"),] <- WAP_lipid[which(WAP$species == "DGTS_DGTA"),]/257151.91
+WAP_lipid[which(WAP$species == "DGCC"),] <- WAP_lipid[which(WAP$species == "DGCC"),]/257151.91
+WAP_lipid[which(WAP$species == "TAG"),] <- WAP_lipid[which(WAP$species == "TAG"),]/TAG_RF
+
+# calculate the double bond averages per sample
+species <- c("TAG", "PC", "PE", "PG", "SQDG", "MGDG", "DGDG", "DGTS_DGTA", "DGCC","GADG")
+
+for (i in 1:length(species)) {
+  class <- species[[i]]
+  lipid_db <- NumDB(WAP, WAP_lipid, class = class)
+  data.frame(WAP_metadata$QE.File.Name, rownames(lipid_db[1:169, ]))
+  WAP_metadata[, paste(class, "db_ave", sep = "_")] <- lipid_db[1:169, "dbaverage"]
+}
+
+classes <- c("DGCC", "DGTS_DGTA", "PC", "PE", "PG", "SQDG", "MGDG", "DGDG", "TAG")
+WAP_metadata$all_db_ave <- NumDB(WAP, WAP_lipid, classes)[-(nrow(WAP_metadata) + 1), "dbaverage"]
+
+classes <- c("DGCC", "DGTS_DGTA", "PC", "PE", "PG", "SQDG", "MGDG", "DGDG")
+WAP_metadata$allmem_db_ave <- NumDB(WAP, WAP_lipid, classes)[-(nrow(WAP_metadata) + 1), "dbaverage"]
+
+classes <- c("PC", "DGCC")
+WAP_metadata$SQDG_PG_db_ave <- NumDB(WAP, WAP_lipid, classes)[-(nrow(WAP_metadata) + 1), "dbaverage"]
+
+# create date time column
+WAP_metadata$date_time <- paste(WAP_metadata$Date,WAP_metadata$Time)
+
+# Create a metadata file to match others
+WAP_metadata_toJoin <- WAP_metadata[, c(
+  "QE.File.Name",
+  "lat", "long","date_time",#"PO4", "NO3.NO2",
+   "DepSM", "CTD_Tempurature","Sal00","FlECO.AFL","Par", 
+  "TAG_db_ave", "PC_db_ave", "PE_db_ave", "PG_db_ave",
+  "SQDG_db_ave", "MGDG_db_ave", "DGDG_db_ave", "DGTS_DGTA_db_ave",
+  "DGCC_db_ave", "all_db_ave", "allmem_db_ave", "SQDG_PG_db_ave","GADG_db_ave", "In_Mixed_Layer","Cast.."
+)]
+WAP_metadata_toJoin$cruise <- "WAP"
+
+colnames(WAP_metadata_toJoin) <- c(
+  "name",
+   "lat", "long","date_time",# "PO4", "NO2_NO3",
+   "depth", "temp","salinity","fluorescence","PAR",
+  "TAG_db_ave", "PC_db_ave", "PE_db_ave", "PG_db_ave",
+  "SQDG_db_ave", "MGDG_db_ave", "DGDG_db_ave", "DGTS_DGTA_db_ave",
+  "DGCC_db_ave", "all_db_ave", "allmem_db_ave", "SQDG_PG_db_ave", "GADG_db_ave","Mixed_Layer","CTD","cruise"
+)
+
+WAP_metadata_toJoin$long <- WAP_metadata_toJoin$long*-1
+WAP_metadata_toJoin$lat <- WAP_metadata_toJoin$lat*-1
+
+WAP_metadata_toJoin$date_time <- as.POSIXct(WAP_metadata_toJoin$date_time,format = "%b %d %y",tz = "UTC")
+
+#No Nutrient Data yet
+WAP_metadata_toJoin$PO4 <- NA
+WAP_metadata_toJoin$NO2_NO3 <- NA
+```
+
+Join Metadata together
+```{r}
+#Bind the metadata together
+Joined_metadata <- rbind(EXPORTS_metadata_toJoin,SNAPL_metadata_toJoin,SCOPE_metadata_toJoin,WAP_metadata_toJoin)
+
+#Turn any FALSE to NA in the mixed layer column for ploting reasons 
+Joined_metadata[which(Joined_metadata$Mixed_Layer == FALSE),"Mixed_Layer"] <- NA
+Joined_metadata[which(is.na(Joined_metadata$Mixed_Layer)),"Mixed_Layer"] <- "Below Mixed Layer"
+Joined_metadata[which(Joined_metadata$Mixed_Layer == TRUE),"Mixed_Layer"] <- "In Mixed Layer"
+
+#Make any BLD into NA for nutrient values 
+Joined_metadata[which(Joined_metadata$NO2_NO3 == "BLD"),"NO2_NO3"] <- NA
+
+# distance from summer solstice in days
+north <- Joined_metadata[which(Joined_metadata$lat > 0), "date_time"] 
+south <- Joined_metadata[which(Joined_metadata$lat < 0), "date_time"] 
+
+# get soltices for both hemispheres
+nor_sum_sol <- north %>%
+  format(format = "%Y") %>%
+  paste("21", "6") %>%
+  as.POSIXct(format = "%Y %d %m", tz = "UTC")
+
+sou_sum_sol <- south %>%
+  format(format = "%Y") %>%
+  paste("21", "12") %>%
+  as.POSIXct(format = "%Y %d %m", tz = "UTC")
+
+# write too column in days
+Joined_metadata[which(Joined_metadata$lat < 0), "summer_sol_dist"] <- as.numeric(difftime(south,sou_sum_sol,units = "days"))
+Joined_metadata[which(Joined_metadata$lat > 0), "summer_sol_dist"] <- as.numeric(difftime(north,nor_sum_sol,units = "days"))
+
+Joined_metadata[which(Joined_metadata$summer_sol_dist < 0), "summer_sol_dist"] <- Joined_metadata[which(Joined_metadata$summer_sol_dist < 0), "summer_sol_dist"] + 365
+
+write.csv(Joined_metadata,"C:/Users/henryholm/OneDrive - Woods Hole Oceanographic Institution/Desktop/SNAPL/SNAPL Simplified Dataset/Data/csv/Holm_global_Suspended_metadata_final_3262022.csv")
+```
+
+Join All Lipid Data (Also Supplementary Figure 6)
+```{r}
+library(ggplot2)
+
+#Join Lipid Data Found in both data sets
+Joined <- full_join(EXPORTS,SNAPL,by = 'compound_name')
+
+#combine key columns 
+test <- data.frame(Joined$species.x,Joined$species.y)
+Joined$species <- apply(test, 1, function(x) if(is.na(x[[1]])){x[[2]]}else{x[[1]]})
+test <- data.frame(Joined$FA_total_no_DB.x,Joined$FA_total_no_DB.y)
+Joined$FA_total_no_DB <- apply(test, 1, function(x) if(is.na(x[[1]])){x[[2]]}else{x[[1]]})
+test <- data.frame(Joined$FA_total_no_C.x,Joined$FA_total_no_C.y)
+Joined$FA_total_no_C<- apply(test, 1, function(x) if(is.na(x[[1]])){x[[2]]}else{x[[1]]})
+test <- data.frame(Joined$lipid_class.x,Joined$lipid_class.y)
+Joined$lipid_class <- apply(test, 1, function(x) if(is.na(x[[1]])){x[[2]]}else{x[[1]]})
+test <- data.frame(Joined$LOBdbase_mz.x,Joined$LOBdbase_mz.y)
+Joined$LOBdbase_mz <- apply(test, 1, function(x) if(is.na(x[[1]])){x[[2]]}else{x[[1]]})
+test <- data.frame(Joined$elem_formula.x,Joined$elem_formula.y)
+Joined$elem_formula <- apply(test, 1, function(x) if(is.na(x[[1]])){x[[2]]}else{x[[1]]})
+
+Joined$SNAPL_ms2 <- Joined$File_ms2
+Joined$SNAPL_notes <- Joined$notes.y
+Joined$EXPORTS_notes <- Joined$notes.x
+
+Joined$EXPORTS_rt <-Joined$peakgroup_rt.x
+Joined$SNAPL_rt <-Joined$peakgroup_rt.y
+
+#Joined$EXPORTS_FA <- paste(Joined$FA_1_name.x,Joined$FA_2_name.x)
+#Joined$SNAPL_FA <- paste(Joined$FA_1_name.y,Joined$FA_2_name.y)
+
+Joined$EXPORTS_adduct_summary <- Joined$adduct_summary.x
+Joined$SNAPL_adduct_summary <- Joined$adduct_summary.y
+
+#Limit to key columns. Select metadata we want and all sample columns (contians ".mzxml")
+Joined <- Joined[, c(
+  which(colnames(Joined) %in% c(
+    "compound_name",
+    "SNAPL_adduct_summary",
+    "EXPORTS_adduct_summary",
+    "WAP_adduct_summary",
+    "EXPORTS_rt",
+    "SNAPL_rt",
+    "FA_total_no_DB",
+    "FA_total_no_C",
+    "lipid_class",
+    "LOBdbase_mz",
+    "elem_formula",
+    "species",
+    "EXPORTS_ms2",
+    "EXPORTS_DHA_Frag",
+    "EXPORTS_EPA_Frag",
+    "SNAPL_ms2",
+    "SNAPL_EPA_Frag",
+    "SNAPL_DHA_Frag",
+    "SNAPL_notes",
+    "EXPORTS_notes",
+    "fa_qaunt_SNAPL",
+    "pos_neg_adduct_SNAPL",
+    "pos_neg_adduct_file_SNAPL",
+    "EXPORTS_FA",
+    "SNAPL_FA"
+  )),
+  which(grepl(pattern = "QE0", colnames(Joined)))
+)]
+
+#Join with SCOPE
+Joined <- full_join(Joined,SCOPE,by = "compound_name")
+
+#combine key columns again
+test <- data.frame(Joined$species.x,Joined$species.y)
+Joined$species <- apply(test, 1, function(x) if(is.na(x[[1]])){x[[2]]}else{x[[1]]})
+test <- data.frame(Joined$FA_total_no_DB.x,Joined$FA_total_no_DB.y)
+Joined$FA_total_no_DB <- apply(test, 1, function(x) if(is.na(x[[1]])){x[[2]]}else{x[[1]]})
+test <- data.frame(Joined$FA_total_no_C.x,Joined$FA_total_no_C.y)
+Joined$FA_total_no_C<- apply(test, 1, function(x) if(is.na(x[[1]])){x[[2]]}else{x[[1]]})
+test <- data.frame(Joined$lipid_class.x,Joined$lipid_class.y)
+Joined$lipid_class <- apply(test, 1, function(x) if(is.na(x[[1]])){x[[2]]}else{x[[1]]})
+test <- data.frame(Joined$LOBdbase_mz.x,Joined$LOBdbase_mz.y)
+Joined$LOBdbase_mz <- apply(test, 1, function(x) if(is.na(x[[1]])){x[[2]]}else{x[[1]]})
+test <- data.frame(Joined$elem_formula.x,Joined$elem_formula.y)
+Joined$elem_formula <- apply(test, 1, function(x) if(is.na(x[[1]])){x[[2]]}else{x[[1]]})
+
+# Limit to key columns and reorder
+Joined <- Joined[, c(
+  which(colnames(Joined) %in% c(
+    "compound_name",
+    "SNAPL_adduct_summary",
+    "EXPORTS_adduct_summary",
+    "WAP_adduct_summary",
+    "EXPORTS_rt",
+    "SNAPL_rt",
+    "FA_total_no_DB",
+    "FA_total_no_C",
+    "lipid_class",
+    "LOBdbase_mz",
+    "elem_formula",
+    "species",
+    "EXPORTS_ms2",
+    "EXPORTS_DHA_Frag",
+    "EXPORTS_EPA_Frag",
+    "SNAPL_ms2",
+    "SNAPL_EPA_Frag",
+    "SNAPL_DHA_Frag",
+    "SNAPL_notes",
+    "EXPORTS_notes",
+    "fa_qaunt_SNAPL",
+    "pos_neg_adduct_SNAPL",
+    "pos_neg_adduct_file_SNAPL",
+    "EXPORTS_FA",
+    "SNAPL_FA"
+  )),
+  which(grepl(pattern = "QE0", colnames(Joined)))
+)]
+
+#Join with WAP
+Joined <- full_join(Joined,WAP,by = "compound_name")
+
+#combine key columns again
+test <- data.frame(Joined$species.x,Joined$species.y)
+Joined$species <- apply(test, 1, function(x) if(is.na(x[[1]])){x[[2]]}else{x[[1]]})
+test <- data.frame(Joined$FA_total_no_DB.x,Joined$FA_total_no_DB.y)
+Joined$FA_total_no_DB <- apply(test, 1, function(x) if(is.na(x[[1]])){x[[2]]}else{x[[1]]})
+test <- data.frame(Joined$FA_total_no_C.x,Joined$FA_total_no_C.y)
+Joined$FA_total_no_C<- apply(test, 1, function(x) if(is.na(x[[1]])){x[[2]]}else{x[[1]]})
+test <- data.frame(Joined$LOBdbase_mz.x,Joined$LOBdbase_mz.y)
+Joined$LOBdbase_mz <- apply(test, 1, function(x) if(is.na(x[[1]])){x[[2]]}else{x[[1]]})
+test <- data.frame(Joined$elem_formula.x,Joined$elem_formula.y)
+Joined$elem_formula <- apply(test, 1, function(x) if(is.na(x[[1]])){x[[2]]}else{x[[1]]})
+
+Joined$WAP_rt <- Joined$peakgroup_rt
+Joined$WAP_comment <- Joined$Henry_comment
+Joined$WAP_ms2 <- Joined$ms2
+Joined$WAP_adduct_summary <- Joined$adduct_summary
+
+# Limit to key columns and reorder
+Joined <- Joined[, c(
+  which(colnames(Joined) %in% c(
+    "compound_name",
+    "SNAPL_adduct_summary",
+    "EXPORTS_adduct_summary",
+    "WAP_adduct_summary",
+    "EXPORTS_rt",
+    "SNAPL_rt",
+    "WAP_rt",
+    "FA_total_no_DB",
+    "FA_total_no_C",
+    "lipid_class",
+    "LOBdbase_mz",
+    "elem_formula",
+    "species",
+    "EXPORTS_ms2",
+    "EXPORTS_DHA_Frag",
+    "EXPORTS_EPA_Frag",
+    "SNAPL_ms2",
+    "SNAPL_EPA_Frag",
+    "SNAPL_DHA_Frag",
+    "SNAPL_notes",
+    "EXPORTS_notes",
+    "fa_qaunt_SNAPL",
+    "pos_neg_adduct_SNAPL",
+    "pos_neg_adduct_file_SNAPL",
+    "EXPORTS_FA",
+    "SNAPL_FA",
+    "WAP_ms2",
+    "WAP_DHA_Frag",
+    "WAP_EPA_Frag",
+    "fa_quant_WAP",
+    "WAP_comment"
+  )),
+  which(grepl(pattern = "QE0", colnames(Joined)))
+)]
+
+
+# Subset EXPORTS to remove entries without metadata (blanks,traps,ect)
+Joined_EXPORTS <- Joined[,which(colnames(Joined) %in% EXPORTS_metadata$File_Name)]
+Joined_EXPORTS <- Joined_EXPORTS[,order(colnames(Joined_EXPORTS))]
+
+#Create a sheet with just lipids from EXPORTS,SNAPL,WAP, and SCOPE
+Joined_lipid <- cbind(Joined_EXPORTS,Joined[,c(355:1116)])
+
+#Set rownames
+rownames(Joined_lipid) <- make.unique(Joined$compound_name,sep = "_")
+
+#Check everything lines up again
+data.frame(colnames(Joined_lipid),Joined_metadata$name)
+
+species <- c("DGDG","MGDG","GADG","PC","PE","PG","SQDG","DGTS_DGTA","DGCC","TAG","PDPT")
+totals <- data.frame(matrix(nrow = 11,ncol = 2))
+totals$species <- species
+for (i in 1:length(species)) {
+  sum <- sum(rowMeans(Joined_lipid[which(Joined$species == species[i]),],na.rm = TRUE))
+  totals[i,"sums"] <- sum
+}
+
+# TAG ECN correction
+TAG <- Joined[which(Joined$species == "TAG"),]
+TAG_ECN <- TAG$FA_total_no_C - (2*(TAG$FA_total_no_DB))
+TAG_RF <-tag_fit(TAG_ECN)
+
+# Save the peakareas for the supplimentary figure below
+TAGs <- Joined_lipid[which(Joined$species == 'TAG'),]
+
+# Calculate the average TAG peakarea 
+TAGs_ave <- rowSums(TAGs,na.rm = TRUE)/ncol(TAGs)
+TAGs_ave <- data.frame(TAGs_ave)
+TAGs_ave$FA_total_no_C <- Joined[which(Joined$species == 'TAG'),"FA_total_no_C"]
+TAGs_ave$FA_total_no_DB <- Joined[which(Joined$species == 'TAG'),"FA_total_no_DB"]
+TAGs_ave$ECN <- (TAGs_ave$FA_total_no_C - 2*TAGs_ave$FA_total_no_DB)
+
+# Plot
+right <- ggplot() + geom_col(aes(y = TAGs_ave$TAGs_ave,x = TAGs_ave$ECN)) +
+xlab("TAG ECN") +
+ylab("Average TAG Peakarea") +
+  theme_pubr()
+
+left <- ggplot() +
+  geom_point(aes(x,y),data = data) +
+  geom_line(aes(20:60,tag_fit(20:60)),color = "black") +
+  ylab("Correction Factor (Peak Area / pgOC)")+ 
+  xlab("ECN") + theme_pubr()
+
+gridExtra::grid.arrange(left,right, nrow = 1)
+
+#Scale peaks relative to DNPPE using EXPORTS Response factors
+Joined_lipid[which(Joined$species == "DGDG"),] <- Joined_lipid[which(Joined$species == "DGDG"),]/16232.00
+Joined_lipid[which(Joined$species == "MGDG"),] <- Joined_lipid[which(Joined$species == "MGDG"),]/99125.00
+Joined_lipid[which(Joined$species == "GADG"),] <- Joined_lipid[which(Joined$species == "GADG"),]/99125.00
+Joined_lipid[which(Joined$species == "PC"),] <- Joined_lipid[which(Joined$species == "PC"),]/131852.60
+Joined_lipid[which(Joined$species == "PE"),] <- Joined_lipid[which(Joined$species == "PE"),]/71517.07
+Joined_lipid[which(Joined$species == "PG"),] <- Joined_lipid[which(Joined$species == "PG"),]/61195.00
+Joined_lipid[which(Joined$species == "SQDG"),] <- Joined_lipid[which(Joined$species == "SQDG"),]/31193.00
+Joined_lipid[which(Joined$species == "DGTS_DGTA"),] <- Joined_lipid[which(Joined$species == "DGTS_DGTA"),]/257151.91
+Joined_lipid[which(Joined$species == "DGCC"),] <- Joined_lipid[which(Joined$species == "DGCC"),]/257151.91
+#Joined_lipid[which(Joined$species == "PDPT"),] <- Joined_lipid[which(Joined$species == "PDPT"),]/131852.60
+Joined_lipid[which(Joined$species == "DNPPE"),] <- Joined_lipid[which(Joined$species == "DNPPE"),]/48975
+Joined_lipid[which(Joined$species == "TAG"),] <- Joined_lipid[which(Joined$species == "TAG"),]/TAG_RF
+  
+species <- c("DGDG","MGDG","GADG","PC","PE","PG","SQDG","DGTS_DGTA","DGCC","TAG")
+totals <- data.frame(matrix(nrow = 10,ncol = 2))
+
+totals$species <- species
+for (i in 1:length(species)) {
+  sum <- sum(rowMeans(Joined_lipid[which(Joined$species == species[i]),],na.rm = TRUE))
+  totals[i,"sums"] <- sum
+}
+
+Joined_metadata$recovery <- as.numeric(t(Joined_lipid[which(Joined$species == "DNPPE"),]/980000)) #picograms injected
+
+Joined_metadata[which(Joined_metadata$cruise == "EXPORTS"),"recovery"] <- t(Joined_lipid[which(Joined$species == "DNPPE"),which(Joined_metadata$cruise == "EXPORTS")]/751679.9657) #picograms injected EXPORTS
+
+# Blank Subtraction
+AE1319_blk <- rowMeans(Joined_lipid[, c(
+  "AE1319_A672_QE001723.mzXML",
+  "AE1319_A695_QE001805.mzXML",
+  "AE1319_A713_QE001785.mzXML"
+)], na.rm = TRUE)
+
+AE1409_blk <- rowMeans(Joined_lipid[, c(
+  "AE1409_A740blank_QE001855.mzXML",
+  "AE1409_A741blank_QE001881.mzXML"
+)], na.rm = TRUE)
+
+KN210.4_blk <- rowMeans(Joined_lipid[, c(
+  "KN210.4_A742blank_QE001989.mzXML",
+  "KN210.4_A743blank_QE001996.mzXML",
+  "KN210.4_A744blank_QE002080.mzXML",
+  "KN210.4_A397_QE002031.mzXML"
+)], na.rm = TRUE)
+
+WAP_blk <- Joined_lipid[, c("QE009643.mzXML")] # WAP
+
+EXPORTS_blk <- Joined_lipid[, c("QE007270_20190417095306.mzXML")] # EXPORTS
+
+SCOPE_blk <- rowMeans(Joined_lipid[, c(
+  "QE005115",
+  "QE005125",
+  "QE005148",
+  "QE005179",
+  "QE005180",
+  "QE005181"
+)],na.rm = TRUE) # SCOPE - extraction blanks
+
+blanks <- cbind(AE1319_blk,AE1409_blk,KN210.4_blk,WAP_blk,EXPORTS_blk,SCOPE_blk)
+blanks <- data.frame(blanks)
+blanks$compound_name <- Joined$compound_name
+rownames(blanks)
+blanks$species <- Joined$species
+
+blanks[which(is.na(blanks$AE1319_blk)),"AE1319_blk"] <- 0
+blanks[which(is.na(blanks$AE1409_blk)),"AE1409_blk"] <- 0
+blanks[which(is.na(blanks$KN210.4_blk)),"KN210.4_blk"] <- 0
+blanks[which(is.na(blanks$WAP_blk)),"WAP_blk"] <- 0
+blanks[which(is.na(blanks$EXPORTS_blk)),"EXPORTS_blk"] <- 0
+
+Joined_lipid_blk <- Joined_lipid
+
+Joined_lipid_blk[,which(Joined_metadata$cruise == "AE1319")] <- Joined_lipid_blk[,which(Joined_metadata$cruise == "AE1319")] - blanks$AE1319_blk
+Joined_lipid_blk[,which(Joined_metadata$cruise == "AE1409")] <- Joined_lipid_blk[,which(Joined_metadata$cruise == "AE1409")] - blanks$AE1409_blk
+Joined_lipid_blk[,which(Joined_metadata$cruise == "KN210_4")] <- Joined_lipid_blk[,which(Joined_metadata$cruise == "KN210_4")] - blanks$KN210.4_blk
+Joined_lipid_blk[,which(Joined_metadata$cruise == "KN207_1")] <- Joined_lipid_blk[,which(Joined_metadata$cruise == "KN207_1")] - blanks$KN210.4_blk
+Joined_lipid_blk[,which(Joined_metadata$cruise == "WAP")] <- Joined_lipid_blk[,which(Joined_metadata$cruise == "WAP")] - blanks$WAP_blk
+Joined_lipid_blk[,which(Joined_metadata$cruise == "SCOPE")] <- Joined_lipid_blk[,which(Joined_metadata$cruise == "SCOPE")] - blanks$SCOPE_blk
+Joined_lipid_blk[,which(Joined_metadata$cruise == "EXPORTS")] <- Joined_lipid_blk[,which(Joined_metadata$cruise == "EXPORTS")] - blanks$EXPORTS_blk
+
+Joined_lipid_blk[Joined_lipid_blk < 0 & !is.na(Joined_lipid_blk)] <- 0
+
+cent <- unlist(Joined_lipid_blk)/unlist(Joined_lipid)
+
+Joined_lipid <- Joined_lipid_blk
+
+# merge EPA, DHA, and MS2 info
+Joined[which(Joined$EXPORTS_DHA_Frag),'posDHA'] <- TRUE
+Joined[which(Joined$SNAPL_DHA_Frag),'posDHA'] <- TRUE
+Joined[which(Joined$WAP_DHA_Frag),'posDHA'] <- TRUE
+
+Joined[which(Joined$EXPORTS_EPA_Frag),'posEPA'] <- TRUE
+Joined[which(Joined$SNAPL_EPA_Frag),'posEPA'] <- TRUE
+Joined[which(Joined$WAP_EPA_Frag),'posEPA'] <- TRUE
+
+Joined[which(Joined$fa_qaunt_SNAPL | Joined$fa_quant_WAP),'fa_quant'] <- TRUE
+
+# correct FA db number for plotting later 
+Joined[which(Joined$species == "TAG"),"FA_total_no_DB"] <- Joined[which(Joined$species == "TAG"),"FA_total_no_DB"]/3
+Joined[-which(Joined$species == "TAG"),"FA_total_no_DB"] <- Joined[-which(Joined$species == "TAG"),"FA_total_no_DB"]/2
+
+# make them dfs
+Joined <- as.data.frame(Joined)
+Joined_lipid <- as.data.frame(Joined_lipid)
+
+Joined$unique_code <- 1:nrow(Joined)
+
+# subset to just glycerolipids
+glycero <- c("SQDG", "DGDG", "MGDG", "PE", "PC", "PG", "DGCC", "DGTS_DGTA", "GADG", "TAG","DNPPE")
+
+# Remove low confidence assignments due to retention time disparities with rest of data sets
+low_confidence <- c("TAG 44:11", "PG 23:3", "PE 23:1", "PE 29:7", "PG 37:2", "PG 43:8")
+
+Joined_lipid <- Joined_lipid[which(Joined$species %in% glycero),]
+Joined <- Joined[which(Joined$species %in% glycero),]
+
+Joined_lipid <- Joined_lipid[-which(Joined$compound_name %in% low_confidence),]
+Joined <- Joined[-which(Joined$compound_name %in% low_confidence),]
+
+data.frame(colnames(Joined_lipid),Joined_metadata$name)
+data.frame(rownames(Joined_lipid),Joined$compound_name)
+
+```
+
+Check Congruence with cleanly formatted data.
+```{r}
+# confirm that combined data is identical with saved and well formatted sheet
+# Load identical lipid data
+Joined_Formated <- read.csv("C:/Users/henryholm/OneDrive - Woods Hole Oceanographic Institution/Desktop/SNAPL/SNAPL Simplified Dataset/Data/csv/Global_Suspended_final_Aug2021.csv")
+
+# Fix compound name column
+colnames(Joined_Formated)[1] <- "Compound.Name"
+
+#isolate lipid columns
+Joined_lipid_formatted <- Joined_Formated[,-c(1:19)]
+
+#Check that it is identical with generated data
+test = Joined_lipid[order(Joined$compound_name),]
+test2 = Joined_lipid_formatted[order(Joined_Formated$Compound.Name),]
+Script_Data = log10(gather(test)$value)
+Formatted_Data = log10(gather(test2)$value)
+plot(Script_Data,Formatted_Data)
+
+```
+

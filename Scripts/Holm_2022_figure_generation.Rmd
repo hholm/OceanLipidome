@@ -1,0 +1,1510 @@
+---
+title: "SNAPL Temp Science Figures"
+output: html_notebook
+  html_document: default
+  pdf_document: default
+  editor_options: 
+    chunk_output_type: console
+  chunk_output_type: console
+date: "3/23/2021"
+---
+
+Load some Helper Functions and Libraries
+```{r chunk 1 - Helper Functions}
+# Load Libraries
+library(ggplot2)      #plotting
+library(ggpubr)       #graph themes
+library(cowplot)      #multi figure labels
+library(gridExtra)    #more plotting
+library(tidyr)        #data formatting
+library(colorRamps)   #color for plotting
+library(colorspace)   #more colors
+library(RColorBrewer) #more colors
+library(readr)        #reading csv files
+library(ggpval)       #calculating p-values
+library(Hmisc)        #graphics
+library(oceanmap)     #ocean mapping
+library(viridis)      #colors
+library(rnaturalearth)     #map data
+library(rnaturalearthdata) #more map data
+
+# See the top left of a data frame
+tl <- function(x){
+  x[1:20,1:20]
+}
+
+# Function to calculate the number the average number of double bounds in a sample
+NumDB <- function(data, lipid, class = NA) {
+
+  # subset to only correct molecule class
+  if (!is.na(class)) {
+    onlyspecies <- lipid[which(data$species %in% class), ]
+  } else {
+    onlyspecies <- lipid
+  }
+
+  # sum the columns, divide each value by the column sum, and make a matrix of percents
+  mtrxpercent <- t(t(onlyspecies) / rowSums(t(onlyspecies)))
+  dfpercent <- as.data.frame(mtrxpercent)
+
+  # Add the db values back in.
+  if (!is.na(class)) {
+    dfpercent$FA_total_no_DB <- data[which(data$species %in% class), "FA_total_no_DB"]
+    dfpercent$sp <- data[which(data$species %in% class), "species"]
+    dfpercent[which(dfpercent$sp != "TAG"), "FA_total_no_DB"] <- dfpercent[which(dfpercent$sp != "TAG"), "FA_total_no_DB"] / 2
+    dfpercent[which(dfpercent$sp == "TAG"), "FA_total_no_DB"] <- dfpercent[which(dfpercent$sp == "TAG"), "FA_total_no_DB"] / 3
+    dfpercent$sp <- NULL
+  } else {
+    dfpercent$FA_total_no_DB <- data[, "FA_total_no_DB"]
+    dfpercent$FA_total_no_DB <- data[, "species"]
+    dfpercent[which(dfpercent$sp != "TAG"), "FA_total_no_DB"] <- dfpercent[which(dfpercent$sp != "TAG"), "FA_total_no_DB"] / 2
+    dfpercent[which(dfpercent$sp == "TAG"), "FA_total_no_DB"] <- dfpercent[which(dfpercent$sp == "TAG"), "FA_total_no_DB"] / 3
+    dfpercent$sp <- NULL
+  }
+
+  # Now a for loop to sum our percents with same DBs
+  # First make a storage frame
+  dbs <- unique(dfpercent$FA_total_no_DB)
+  storage <- data.frame(matrix(nrow = (ncol(dfpercent)), ncol = length(dbs)))
+
+  for (j in 1:length(dbs)) {
+    summed <- as.data.frame(colSums(dfpercent[which(dfpercent[, "FA_total_no_DB"] == dbs[j]), ]))
+    summed["FA_total_no_DB", ] <- dbs[j]
+    colnames(summed) <- dbs[j]
+    storage[, j] <- summed
+    colnames(storage)[j] <- dbs[j]
+    row.names(storage) <- row.names(summed)
+  }
+
+  # calculate the weighted average for each sample (applyed by row)
+  dbaverage <- apply(storage, 2, function(x) {
+    x * x["FA_total_no_DB"]
+  })
+  storage$dbaverage <- rowSums(dbaverage)
+
+  # All set. Return the dataframe
+  return(storage)
+}
+
+```
+
+Load Data - Well Formatted
+```{r chunk 2 - Load Data}
+# Load lipid data, adjust compound name column header
+Joined <- read.csv("C:/Users/henryholm/OneDrive - Woods Hole Oceanographic Institution/Desktop/SNAPL/SNAPL Simplified Dataset/Data/csv/Joined/Holm_global_suspended_final.csv")
+colnames(Joined)[1] <- "Compound.Name"
+
+# Load metadata
+Joined_metadata <- read.csv("C:/Users/henryholm/OneDrive - Woods Hole Oceanographic Institution/Desktop/SNAPL/SNAPL Simplified Dataset/Data/csv/Joined/Holm_global_suspended_metadata_final.csv")
+
+# isolate lipid data
+Joined_lipid <- Joined[,-c(1:19)]
+
+#fix column name on import
+row.names(Joined_lipid) <- Joined$Compound.Name
+
+#specify DAGs vs TAGs
+DAGs <- c("SQDG", "DGDG", "MGDG", "PE", "PC", "PG", "DGCC", "DGTS_DGTA", "GADG")
+
+# Load modeled temp data
+loc <- "C:/Users/henryholm/OneDrive - Woods Hole Oceanographic Institution/Desktop/SNAPL/SNAPL Simplified Dataset/Data/netcdf/Kwiatkowski_temp_data.nc"
+Biogeosciences_2020_fig2abc <- ncdf4::nc_open(loc)
+
+#Change cruise name from WAP (Western Antarctic Pennisula) to cruise name
+Joined_metadata[which(Joined_metadata$cruise == "WAP"),"cruise"] <- "LMG1810"
+
+#check columns and row between data sheets
+data.frame(colnames(Joined_lipid),Joined_metadata$name)
+
+#match column names
+Joined_metadata$name <- colnames(Joined_lipid)
+
+# Change doublebonds to per FA in Joined 
+Joined[which(Joined$Species == "TAG"),"Total.FA.Double.Bonds"] <- Joined[which(Joined$Species == "TAG"),"Total.FA.Double.Bonds"]/3
+Joined[which(Joined$Species %in% DAGs),"Total.FA.Double.Bonds"] <- Joined[which(Joined$Species %in% DAGs),"Total.FA.Double.Bonds"]/2
+
+#get col pallette for cruises and edit the LMGs
+library(scales)
+pal <- hue_pal()(7)
+pal[6] <- "#693bff"
+
+```
+
+Figure 1 - Dataset Overview
+```{r chunk 3 - Fig 1,fig.height=6,fig.width=8}
+#load earth data
+world <- rnaturalearth::ne_countries(scale = "small",returnclass = 'sf')
+
+#change names
+plot <- Joined_metadata
+plot$cruise <- as.character(plot$cruise)
+plot[which(plot$cruise == "EXPORTS"),"cruise"] <- "RR1813"
+plot[which(plot$cruise == "SCOPE"),"cruise"] <- "KM1709"
+plot[which(plot$cruise == "KN210_4"),"cruise"] <- "KN210-4"
+plot[which(plot$cruise == "KN207_1"),"cruise"] <- "KN207-1"
+
+plot$cruise <- as.factor(plot$cruise)
+
+#levels(plot$cruise) <- levels(plot$cruise)[c(1:5,8,6,7)]
+
+#set colors
+col <- c("#d03939","#fbae39","#73950f","#1ca4b0","#225459","#8f008a","#aa69ff")
+
+#plot
+map <- ggplot() +
+  geom_sf(data = world,color = "grey50",fill = "grey50") +
+  xlab("Longitude") +
+  xlim(c(-160, -20)) +
+  ylim(c(-70, 70)) +
+  ylab("Latitude") +
+  geom_point(
+    data = plot[which(plot$cruise != "NetTrapQC"), ],
+    aes(x = long, y = lat, color = cruise),size = 2
+  ) +
+  guides(color = guide_legend(title = "Cruises")) +
+  theme(
+    panel.grid.major = element_line(
+      color = gray(.5),
+      linetype = "dotted",
+      size = 0.5
+    ),
+    panel.background = element_rect(fill = "white"),
+    legend.position = "top",legend.title = element_blank()
+  ) + scale_color_manual(values = pal)
+
+### Calc Abundance
+
+# create abundance table with proper headers
+abundance <- data.frame(
+  Joined[,"Compound.Name"],
+  Joined[,"Species"],
+  Joined[,"Total..FA.Carbon.Atoms"],
+  Joined[,"Total.FA.Double.Bonds"],
+  rowSums(Joined_lipid[,which(Joined_metadata$cruise != "NetTrapQC")],na.rm = TRUE)
+)
+
+# replace colnames
+colnames(abundance) <- c("compound_name", "species", "FA_total_no_C", "FA_total_no_DB", "Total_Abs")
+
+# limit to key species
+abundance <- abundance[which(abundance$species %in% c("SQDG", "DGDG", "MGDG", "PE", "PC", "PG", "DGCC", "DGTS_DGTA", "TAG", "GADG")),]
+
+# Rank by abundance, order, and calculate total abundance
+abundance$rank <- rank(-abundance$Total_Abs, ties.method = "min")
+abundance <- abundance[order(abundance[, "rank"]), ]
+abundance$cumu <- rep(0, length(nrow(abundance)))
+
+# Calculate the cumulative abundance
+for (i in 1:nrow(abundance)) {
+  if (i == 1) {
+    abundance[i, "cumu"] <- abundance[i, "Total_Abs"]
+  } else {
+    abundance[i, "cumu"] <- abundance[i, "Total_Abs"] + abundance[i - 1, "cumu"]
+  }
+}
+
+# Calculate the cumulative percent, abundance as a percent, and rank as a percent
+abundance[, "cumu_cent"] <- abundance[, "cumu"] / max(abundance$cumu,na.rm = TRUE)
+abundance[, "Abs_cent"] <- abundance[, "Total_Abs"] / sum(abundance[, "Total_Abs"])
+abundance[, "Rank_percent"] <- abundance[, "rank"] / abundance[nrow(abundance), "rank"]
+
+# Plot 
+B2 <- ggplot(abundance, aes(x = Abs_cent*100)) +
+  geom_histogram(bins = 150,fill = "grey50") + theme_pubclean() +
+  scale_x_log10(breaks = scales::trans_breaks("log10", function(x) 10^x),
+              labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  xlab("Relative abundance (%)") + ylab("# Species")
+
+### Prevelence
+
+#prev table
+Prevelence <- data.frame(
+  Joined[,"Compound.Name"],
+  Joined[,"Species"],
+  Joined[,"Total..FA.Carbon.Atoms"],
+  Joined[,"Total.FA.Double.Bonds"],
+  prev = NA)
+
+#change colnames
+colnames(Prevelence) <- c("compound_name","species","FA_total_no_C","FA_total_no_DB","prev")
+
+#isolate dags and tags
+Joined_lipid_prev <- Joined_lipid[which(Prevelence$species %in% c("SQDG", "DGDG", "MGDG","DGTS_DGTA","DGCC","PG","PC","PE","TAG", "GADG")),which(startsWith(Joined_metadata$name,prefix = 'S'))]
+
+#and prev table
+Prevelence <- Prevelence[which(Prevelence$species %in%  c("SQDG", "DGDG", "MGDG", "PE", "PC", "PG", "DGCC", "DGTS_DGTA", "TAG", "GADG")),]
+
+#check
+data.frame(rownames(Joined_lipid_prev),Prevelence$compound_name)
+
+#check prevelence of every lipid
+Prevelence$prev <- apply(Joined_lipid_prev, 1, function(x) length(x)-(length(which(x==0))+length(which(is.na(x)))))
+
+#as a percentage
+Prevelence[,"prev_cent"] <- Prevelence[,"prev"]/length(which(startsWith(Joined_metadata$name,prefix = 'S')))
+
+#rank them
+Prevelence$rank <- rank(-Prevelence$prev_cent,ties.method = 'min')
+
+#plot
+C2 <- ggplot(Prevelence, aes(x = prev_cent*100)) +
+  geom_histogram(bins = 150,fill = "grey50") + theme_pubclean() +
+  xlab("Prevalence (%)") + ylab("# Species") + xlim(c(0,100))
+
+### Bring them together
+
+#match
+data.frame(prev = Prevelence[order(Prevelence$compound_name),"compound_name"],
+           abs = abundance[order(abundance$compound_name),"compound_name"])
+
+#new table ordered
+plot3 <- data.frame(prev = Prevelence[order(Prevelence$compound_name),"prev_cent"],
+                    abs = abundance[order(abundance$compound_name),"Abs_cent"],
+                    species = abundance[order(abundance$compound_name),"species"])
+#plot
+D <- ggplot(plot3, aes(y = prev*100, x = abs*100)) +
+  geom_point(color = "grey50", size = 1) + theme_pubclean() +
+    scale_x_log10(breaks = scales::trans_breaks("log10", function(x) 10^x),
+              labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  xlab("Relative abundance (%)") + ylab("Prevalence (%)")
+
+#add them
+plot_grid(map,plot_grid(B2,C2,D,ncol = 1,labels = c("B.","C.","D."),hjust = 0.25,vjust = 1.25),labels = c("A.",""),rel_widths = c(2.25,1))
+
+```
+
+Figure 2 - Temperature Trends
+```{r chunk 4 - Fig 2}
+
+### Main windows A-I
+
+# Select wanted species and subset to mixed layer
+loop <- c("SQDG", "TAG", "DGTS_DGTA", "PE")
+
+mixed <- Joined_metadata[which(Joined_metadata$Mixed_Layer == "In Mixed Layer"), ]
+
+# Set Palette ahead of time
+col <- colorRampPalette(colors = c("#BC3838", "#FFFFFF", "#2F3191"))
+colors <- col(length(unique(Joined$Total.FA.Double.Bonds)))
+
+# name the palette
+names(colors) <- as.character(sort(unique(Joined$Total.FA.Double.Bonds)))
+
+Temp_Final_col1 <- list()
+Temp_Final_col2 <- list()
+
+# Loop to make all the plots
+for (i in 1:length(loop)) {
+  choosen_species <- loop[i]
+
+  # Calculate linear fit in mixed layer
+  fit <- lm(mixed[, paste(choosen_species, "db_ave", sep = "_")] ~ temp, data = mixed)
+  print(summary(fit))
+  # clean up label to print on figure
+  if (choosen_species == "allmem") {
+    label <- "All Membrane"
+  } else if (choosen_species == "all") {
+    label <- "All Lipids"
+  } else {
+    if (choosen_species == "DGTS_DGTA") {
+      label <- "DGTS/A" # what its is used in the paper
+    } else {
+      label <- choosen_species
+    }
+  }
+
+  # print p-val
+  pval <- pf(summary(fit)$fstatistic[1], summary(fit)$fstatistic[2], summary(fit)$fstatistic[3], lower.tail = F)
+
+  if (pval < 0.001) {
+    pval_to_print <- "p < 0.001"
+  } else {
+    pval_to_print <- pval
+  }
+
+  # plot with mixed and layer and below
+  fin1 <- ggplot(Joined_metadata) +
+    scale_color_manual(values = c("grey60", "red")) +
+    geom_point(
+      data = Joined_metadata[which(Joined_metadata$Mixed_Layer == "In Mixed Layer"), ],
+      aes(temp, Joined_metadata[which(Joined_metadata$Mixed_Layer == "In Mixed Layer"), paste(choosen_species, "db_ave", sep = "_")]),
+      shape = 16,
+      color = "black",size = 1
+    ) +
+    stat_smooth(
+      data = Joined_metadata[which(Joined_metadata$Mixed_Layer == "In Mixed Layer"), ],
+      mapping = aes_string(x = names(fit$model)[2], y = names(fit$model)[1]),
+      method = "lm", col = "red", se = TRUE, level = 0.99
+    ) +
+    stat_cor(
+      data = Joined_metadata[which(Joined_metadata$Mixed_Layer == "In Mixed Layer"), ],
+      mapping = aes(temp,
+        Joined_metadata[which(Joined_metadata$Mixed_Layer == "In Mixed Layer"), paste(choosen_species, "db_ave", sep = "_")],
+        label = c(..rr.label.., pval_to_print)
+      ),
+      label.x = -Inf, label.y = -Inf, vjust = c(-1.8, -0.8), hjust = -0.1, size = 3
+    ) +
+    ggplot2::annotate("text", label = label, Inf, Inf, hjust = 1, vjust = 1,size = 3) +
+    theme_pubr() +
+    theme(
+      axis.title.y = element_blank(),
+      axis.title.x = element_blank(),
+      axis.text.x = element_text(size = 7),
+      axis.text.y = element_text(size = 7),
+      legend.position = "none"
+    )
+
+  if (choosen_species == "allmem") {
+    all <- c("SQDG", "DGDG", "MGDG", "PE", "PC", "PG", "DGCC", "DGTS_DGTA")
+    lipid <- Joined_lipid[which(Joined$Species %in% all), which(Joined_metadata$Mixed_Layer == "In Mixed Layer")]
+    meta <- Joined[which(Joined$Species %in% all), ]
+  } else if (choosen_species == "all") {
+    all <- c("SQDG", "DGDG", "MGDG", "PE", "PC", "PG", "DGCC", "DGTS_DGTA", "TAG")
+    lipid <- Joined_lipid[which(Joined$Species %in% all), which(Joined_metadata$Mixed_Layer == "In Mixed Layer")]
+    meta <- Joined[which(Joined$Species %in% all), ]
+  } else {
+    lipid <- Joined_lipid[which(Joined$Species %in% choosen_species), which(Joined_metadata$Mixed_Layer == "In Mixed Layer")]
+    meta <- Joined[which(Joined$Species %in% choosen_species), ]
+  }
+
+  samp <- Joined_metadata[which(Joined_metadata$Mixed_Layer == "In Mixed Layer"), ]
+
+  pm <- t(t(lipid) / rowSums(t(lipid), na.rm = TRUE))
+  pm <- as.data.frame(pm)
+
+  plot <- cbind(pm, meta[, c(
+    "Compound.Name", "Total.FA.Double.Bonds",
+    "Total..FA.Carbon.Atoms", "Species"
+  )])
+
+  for_plot <- gather(plot,
+    key = "sample",
+    value = "abs",
+    -Total.FA.Double.Bonds, -Total..FA.Carbon.Atoms, -Compound.Name, -Species
+  )
+
+  for_plot$legend_title <- for_plot$Total.FA.Double.Bonds
+  plot$legend_title <- plot$Total.FA.Double.Bonds
+
+  # check coherence
+  identical(colnames(pm)[order(samp$temp)], mixed$name[order(samp$temp)])
+
+  tired1 <- ggplot() +
+    geom_bar(
+      aes(
+        fill = factor(legend_title, levels = names(rev(colors))),
+        x = factor(sample, levels = colnames(pm)[order(samp$temp)]),
+        y = abs
+      ),
+      for_plot,
+      stat = "identity", width = 1
+    ) +
+    xlab("Mixed Layer Samples") +
+    scale_fill_manual(values = colors, drop = FALSE) +
+    ylab("Relative Abundance") +
+    guides(fill = guide_legend(title = paste("All Species"))) +
+    theme(legend.position = "top", axis.text.y = element_text(size = 7, color = "black"))
+
+  legend <- get_legend(tired1 + theme_bw() + theme(legend.position = "top"))
+
+  tired1 <- tired1 +
+    theme(
+      axis.title.x = element_blank(),
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      axis.title.y = element_blank(),
+      axis.text.y = element_text(size = 7, color = "black"),
+      legend.position = "none"
+    )
+
+  tired1 <- tired1 + geom_line(
+    data = mixed,
+    mapping = aes(factor(name, levels = mixed$name[order(samp$temp)]),
+      scales::rescale(temp, from = c(-5, 30), to = c(0, 1)), # to get same range
+      group = 1
+    )
+  ) + scale_y_continuous(
+    name = "Relative Abs",
+    sec.axis = sec_axis(~ scales::rescale(., from = c(0, 1), to = c(-5, 30)),
+      name = "Temp",
+      breaks = c(-5, 0, 10, 20, 30)
+    ),
+    expand = c(0,0)
+  )
+
+  # store
+  Temp_Final_col1[[i]] <- ggplotGrob(fin1)
+  Temp_Final_col2[[i]] <- ggplotGrob(tired1)
+}
+
+Joined_metadata_mix <- Joined_metadata[which(Joined_metadata$Mixed_Layer == "In Mixed Layer"), ]
+
+# make a legend
+legend_contiuous <- ggplot() +
+  geom_point(aes(0:6, 0:6, fill = 0:6)) +
+  guides(fill = guide_colorbar(
+    title = "Unsaturation\nper FA\n", barwidth = 17
+  )) +
+  scale_fill_gradientn(
+    colors = c("#BC3838", "#FFFFFF", "#2F3191"),
+    breaks = seq(0, 6, 0.5),
+  ) +
+  xlab("Mixed Layer") +
+  theme(legend.position = "top")
+
+leg_for_final <- get_legend(legend_contiuous)
+
+aligned <- cowplot::align_plots(
+        Temp_Final_col2[[1]],
+        Temp_Final_col2[[2]],
+        Temp_Final_col2[[3]],
+        Temp_Final_col2[[4]],
+        Temp_Final_col1[[1]],
+        Temp_Final_col1[[2]],
+        Temp_Final_col1[[3]],
+        Temp_Final_col1[[4]],
+        align = "hv")
+
+# final plot
+fig2 <- plot_grid(leg_for_final,
+  ncol = 1,
+  rel_heights = c(2, 20),
+  plot_grid(
+    grid.arrange(
+      plot_grid(
+        aligned[[1]],
+        aligned[[2]],
+        aligned[[3]],
+        aligned[[4]],
+        ncol = 1,
+        labels = c("A.", "B.", "C.", "D."),label_size = 9,
+        hjust = 1, label_y = c(1, 1, 0.21, 0.21)
+      ),
+      left = text_grob("Relative Abundance (%)",rot = 90,size = 8),
+      right = text_grob("Temperature (°C)",rot = -90,size = 8),
+      bottom = text_grob("  Mixed Layer Samples",size = 8,vjust = -0.8)
+    ),
+    grid.arrange(
+      plot_grid(
+        aligned[[5]],
+        aligned[[6]],
+        aligned[[7]],
+        aligned[[8]],
+        ncol = 1,
+        labels = c("E.", "F.", "G.", "H."),label_size = 9,
+        hjust = 0, label_y = c(1, 1, 0.21, 0.21)
+      ),
+      left = text_grob("Mean Unsaturation per FA",size = 8,rot = 90,vjust = 2),
+      bottom = text_grob("      Temperature (°C)",size = 8,vjust = -0.8)
+    ),
+    nrow = 1
+  )
+)
+
+fig2
+
+```
+
+Figure 3 - The Future of EPA
+```{r chunk 5 - Fig 3}
+# panel 1
+lip <- "EPA.Fragment"
+
+# select species
+run <- c("SQDG", "DGDG", "MGDG", "PE", "PC", "PG", "DGCC", "DGTS_DGTA")
+
+# restrict
+Joined_test <- Joined[which(Joined$Species %in% run), ]
+lipid_test <- Joined_lipid[which(Joined$Species %in% run), ]
+
+Joined_TRUE <- Joined_test[which(Joined_test[, lip] == TRUE), ]
+lipid_TRUE <- lipid_test[which(Joined_test[, lip] == TRUE), ]
+
+# sum EPA species
+sum_con <- colSums(lipid_TRUE, na.rm = TRUE)
+sum <- colSums(lipid_test, na.rm = TRUE)
+df <- data.frame(percent_con = sum_con / sum)
+
+# Add back
+Joined_metadata$Percent_EPA <- df$percent_con
+
+# model it
+EPA_model <- lm(Percent_EPA * 100 ~ poly(temp, 2, raw = TRUE),
+  data = Joined_metadata[which(Joined_metadata$Mixed_Layer == "In Mixed Layer"), ]
+)
+
+# make a func for the model
+EPA_func <- function(x) {
+  EPA_model$coefficients[3] * x^2 + EPA_model$coefficients[2] * x + EPA_model$coefficients[1]
+}
+
+# adjust some names
+plot <- Joined_metadata
+plot$cruise <- as.character(plot$cruise)
+plot[which(plot$cruise == "EXPORTS"), "cruise"] <- "RR1813"
+plot[which(plot$cruise == "SCOPE"), "cruise"] <- "KM1709"
+plot[which(plot$cruise == "KN210_4"), "cruise"] <- "KN210-4"
+plot[which(plot$cruise == "KN207_1"), "cruise"] <- "KN207-1"
+
+# print p-val
+pval <- pf(summary(EPA_model)$fstatistic[1],
+  summary(EPA_model)$fstatistic[2],
+  summary(EPA_model)$fstatistic[3],
+  lower.tail = F
+)
+
+if (pval < 0.001) {
+  pval_to_print <- "p < 0.001"
+} else {
+  pval_to_print <- pval
+}
+
+
+# plotting
+panel1 <- ggplot() +
+  geom_point(
+    data = plot[which(plot$Mixed_Layer == "In Mixed Layer"), ],
+    aes(temp, Percent_EPA * 100, color = cruise),
+    shape = 16
+  ) +
+  stat_smooth(
+    data = plot[which(plot$Mixed_Layer == "In Mixed Layer"), ],
+    aes(temp, Percent_EPA * 100),
+    formula = y ~ poly(x, 2, raw = TRUE),
+    se = TRUE, level = 0.99, method = "lm", color = "black", size = 0.5
+  ) +
+  geom_line(
+    mapping = aes(x = -2:29, y = EPA_func(-2:29)),
+    col = "black"
+  ) +
+  # stat_cor(
+  #   data = plot[which(plot$Mixed_Layer == "In Mixed Layer"), ],
+  #   mapping = aes(temp, Percent_EPA * 100,
+  #     label = c(..rr.label.., pval_to_print) # gives linear fit, putting in R2
+  #                                            # from EPA_model (0.91 poly) above
+  #                                            # in plot post
+  #   ),
+  #   label.x = -Inf, label.y = -Inf, vjust = c(-1.8, -0.8), hjust = -0.1, size = 4
+  # ) +
+  theme_pubclean() +
+  xlab("Water temperature (°C)") +
+  ylab("%EPA containing species             ") +
+  theme(
+    axis.title.y = element_text(size = 12),
+    plot.title = element_text(size = 12),
+    legend.position = "bottom", legend.title = element_blank()
+  ) +
+  scale_color_manual(values = pal)
+
+# get world data
+mapWorld <- map_data("world", wrap = c(0, 360))
+
+# get raster layers for temp
+temp_histor <- nc2raster(Biogeosciences_2020_fig2abc,
+  "Biogeosciences_2020_fig2a",
+  lonname = "lon",
+  latname = "lat"
+)
+
+temp_SSP1_26 <- nc2raster(Biogeosciences_2020_fig2abc,
+  "Biogeosciences_2020_fig2b",
+  lonname = "lon",
+  latname = "lat"
+)
+
+temp_SSP1_26 <- nc2raster(Biogeosciences_2020_fig2abc,
+  "Biogeosciences_2020_fig2b",
+  lonname = "lon",
+  latname = "lat"
+)
+
+temp_SSP5_85 <- nc2raster(Biogeosciences_2020_fig2abc,
+  "Biogeosciences_2020_fig2c",
+  lonname = "lon",
+  latname = "lat"
+)
+# make df
+temp_histor.df <- as.data.frame(temp_histor, xy = TRUE)
+temp_SSP1_26.df <- as.data.frame(temp_SSP1_26, xy = TRUE)
+temp_SSP5_85.df <- as.data.frame(temp_SSP5_85, xy = TRUE)
+
+# rename columns
+names(temp_histor.df)[3] <- "Degrees_C_hist"
+names(temp_SSP1_26.df)[3] <- "delta_Degrees_C_26"
+names(temp_SSP5_85.df)[3] <- "delta_Degrees_C_85"
+
+# make one frame
+Fig3 <- temp_histor.df
+Fig3$delta_Degrees_C_26 <- temp_SSP1_26.df$delta_Degrees_C_26
+Fig3$delta_Degrees_C_85 <- temp_SSP5_85.df$delta_Degrees_C_85
+
+# get the future temp maps from the delta
+Fig3$Degrees_C_26 <- Fig3$Degrees_C_hist + Fig3$delta_Degrees_C_26
+Fig3$Degrees_C_85 <- Fig3$Degrees_C_hist + Fig3$delta_Degrees_C_85
+
+# convert to EPA
+Fig3$EPA_hist <- EPA_func(Fig3$Degrees_C_hist)
+Fig3$EPA_26 <- EPA_func(Fig3$Degrees_C_26)
+Fig3$EPA_85 <- EPA_func(Fig3$Degrees_C_85)
+
+# find EPA delta
+Fig3$delta_EPA_26 <- Fig3$EPA_26 - Fig3$EPA_hist
+Fig3$delta_EPA_85 <- Fig3$EPA_85 - Fig3$EPA_hist
+
+# relative
+Fig3$EPA_26_over_EPA_hist_other <- Fig3$delta_EPA_26 / (Fig3$EPA_hist)
+Fig3$EPA_85_over_EPA_hist_other <- Fig3$delta_EPA_85 / (Fig3$EPA_hist)
+
+
+# plotting
+map_EPA_hist <- ggplot() +
+  geom_raster(Fig3, mapping = aes(x = x, y = y, fill = EPA_hist)) +
+  scale_fill_distiller(palette = "Greens", direction = 1) +
+  guides(fill = guide_colorbar(title = "% EPA", barwidth = 13)) +
+  scale_x_continuous(breaks = c(90, 180, 270), labels = c(90, 180, -90)) +
+  geom_polygon(data = mapWorld, aes(x = long, y = lat, group = group), fill = "black", color = "black") +
+  theme_pubclean() +
+  theme(
+    legend.position = "bottom", legend.title = element_text(size = 10, vjust = 0.75),
+    axis.title.x = element_blank(), axis.title.y = element_blank()
+  )
+
+map_EPA_delta_26 <- ggplot() +
+  geom_raster(Fig3, mapping = aes(x = x, y = y, fill = delta_EPA_26)) +
+  scale_fill_gradient2(low = "#BC3838", mid = "#FFFFFF", high = "#2F3191") +
+  scale_x_continuous(breaks = c(90, 180, 270), labels = c(90, 180, -90)) +
+  guides(fill = guide_colorbar(title = "<U+0394> %EPA", barheight = 13, position = "right")) +
+  geom_polygon(data = mapWorld, aes(x = long, y = lat, group = group), fill = "black", color = "black") +
+  theme_pubclean() +
+  theme(legend.position = "right", axis.title.x = element_blank(), axis.title.y = element_blank())
+
+map_EPA_delta_85 <- ggplot() +
+  geom_raster(Fig3, mapping = aes(x = x, y = y, fill = delta_EPA_85)) +
+  scale_fill_gradient2(breaks = c(-6, -5, -4, -3, -2, -1, 0, 1), limits = c(-7.1670282, 1.479502)) +
+  guides(fill = guide_colorbar(title = expression(Delta ~ "%EPA"[abs]), barwidth = 13)) +
+  scale_x_continuous(breaks = c(90, 180, 270), labels = c(90, 180, -90)) +
+  geom_polygon(data = mapWorld, aes(x = long, y = lat, group = group), fill = "black", color = "black") +
+  theme_pubclean() +
+  theme(
+    legend.position = "bottom", legend.title = element_text(hjust = 1),
+    axis.title.x = element_blank(), axis.title.y = element_blank()
+  )
+
+# part d plotting
+map_centovercent <- ggplot() +
+  geom_raster(Fig3, mapping = aes(x = x, y = y, fill = EPA_85_over_EPA_hist_other * 100)) +
+  # scale_fill_continuous(type = "viridis",direction = 1,breaks = breaks,labels = labels,option = "plasma") +
+  scale_fill_viridis(option = "plasma", direction = -1, breaks = seq(from = 0, to = -0.3, by = -0.05) * 100) +
+  guides(fill = guide_colorbar(
+    title = expression(Delta ~ "%EPA"[rel]),
+    barwidth = 13, position = "right",
+  )) +
+  scale_x_continuous(breaks = c(90, 180, 270), labels = c(90, 180, -90)) +
+  geom_polygon(data = mapWorld, aes(x = long, y = lat, group = group), fill = "black", color = "black") +
+  theme_pubclean() +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_text(hjust = 1),
+    axis.title.x = element_blank(), axis.title.y = element_blank()
+  )
+
+
+# adjust some labels and breaks
+breaks <- seq(from = 0, to = 0.3, by = 0.025) * 100
+labels <- breaks
+labels[2] <- ""
+
+# bring it all together
+fig3 <- cowplot::plot_grid(panel1,
+  map_EPA_hist,
+  map_EPA_delta_85,
+  map_centovercent,
+  labels = c("A.", "B.", "C.", "D."), hjust = c(-1.5, -1, -1, -1)
+)
+
+fig3
+```
+
+Supp Fig 1 - TAG greater than 5
+```{r chunk 7 - Supp Fig 1}
+# which TAG >5 DB - since we divided by 3 (per FA) i am using (5/3)
+Joined[which(Joined$Total.FA.Double.Bonds >=(5/3)),"Grt_5_db"] <- TRUE
+
+# panel 1
+lip <- "Grt_5_db"
+
+#select species
+run <- c("TAG")
+
+#restrict
+Joined_test <- Joined[which(Joined$Species %in% run), ]
+lipid_test <- Joined_lipid[which(Joined$Species %in% run), ]
+
+Joined_TRUE <- Joined_test[which(Joined_test[, lip] == TRUE), ]
+lipid_TRUE <- lipid_test[which(Joined_test[, lip] == TRUE), ]
+
+#sum TAG species
+sum_con <- colSums(lipid_TRUE, na.rm = TRUE)
+sum <- colSums(lipid_test, na.rm = TRUE)
+df <- data.frame(percent_con = sum_con / sum)
+
+#Add back
+Joined_metadata$Percent_TAG<- df$percent_con
+
+TAG_model <- lm(Percent_TAG*100 ~ poly(temp,2,raw = TRUE),
+                data = Joined_metadata[which(Joined_metadata$Mixed_Layer == "In Mixed Layer"),])
+
+TAG_func <- function(x){TAG_model$coefficients[3]*x^2 + TAG_model$coefficients[2]*x + TAG_model$coefficients[1]}
+
+plot <- Joined_metadata
+plot$cruise <- as.character(plot$cruise)
+plot[which(plot$cruise == "EXPORTS"),"cruise"] <- "RR1813"
+plot[which(plot$cruise == "SCOPE"),"cruise"] <- "KM1709"
+plot[which(plot$cruise == "KN210_4"),"cruise"] <- "KN210-4"
+plot[which(plot$cruise == "KN207_1"),"cruise"] <- "KN207-1"
+
+ggplot() +
+    geom_point(
+      data = plot[which(plot$Mixed_Layer == "In Mixed Layer"), ],
+      aes(temp, Percent_TAG*100,color = cruise),
+      shape = 16
+    ) +
+    geom_line(
+      mapping = aes(x = -2:29, y = TAG_func(-2:29)),
+      col = "black"
+    ) + scale_color_manual(values = pal) + 
+    theme_pubclean()+
+    xlab("Water temperature (°C)") +
+    ylab(expression('%TAG with ' >= '5 Unsaturations')) +
+    theme(
+      axis.title.y = element_text(size = 12),
+      plot.title = element_text(size = 12),
+      legend.position = "bottom",legend.title = element_blank()
+    )
+
+```
+
+Supp Figure 2 - DHA Fit
+```{r chunk 8 - Supp Fig 2}
+# panel 1
+lip <- "DHA.Fragment"
+
+#select species
+run <- c("PC","PE","PG","SQDG","DGDG","MGDG","DGCC","DGTS_DGTA")
+
+#restrict
+Joined_test <- Joined[which(Joined$Species %in% run), ]
+lipid_test <- Joined_lipid[which(Joined$Species %in% run), ]
+
+Joined_TRUE <- Joined_test[which(Joined_test[, lip] == TRUE), ]
+lipid_TRUE <- lipid_test[which(Joined_test[, lip] == TRUE), ]
+
+#sum DHA species
+sum_con <- colSums(lipid_TRUE, na.rm = TRUE)
+sum <- colSums(lipid_test, na.rm = TRUE)
+df <- data.frame(percent_con = sum_con / sum)
+
+#Add back
+Joined_metadata$Percent_DHA <- df$percent_con
+
+DHA_model <- lm(Percent_DHA*100 ~ poly(temp,2,raw = TRUE),
+                data = Joined_metadata[which(Joined_metadata$Mixed_Layer == "In Mixed Layer"),])
+
+
+
+DHA_func <- function(x){DHA_model$coefficients[3]*x^2 + DHA_model$coefficients[2]*x + DHA_model$coefficients[1]}
+
+plot <- Joined_metadata
+plot$cruise <- as.character(plot$cruise)
+plot[which(plot$cruise == "EXPORTS"),"cruise"] <- "RR1813"
+plot[which(plot$cruise == "SCOPE"),"cruise"] <- "KM1709"
+plot[which(plot$cruise == "KN210_4"),"cruise"] <- "KN210-4"
+plot[which(plot$cruise == "KN207_1"),"cruise"] <- "KN207-1"
+
+panel2 <- ggplot() +
+    geom_point(
+      data = plot[which(plot$Mixed_Layer == "In Mixed Layer"), ],
+      aes(temp, Percent_DHA*100,color = cruise),
+      shape = 16
+    ) +
+    geom_line(
+      mapping = aes(x = -2:29, y = DHA_func(-2:29)),
+      col = "black"
+    ) +
+    theme_pubclean()+
+    scale_color_manual(values = pal) + 
+    xlab("Water temperature (°C)") +
+    ylab("%DHA containing species") +
+    theme(
+      axis.title.y = element_text(size = 12),
+      plot.title = element_text(size = 12),
+      legend.position = "bottom",legend.title = element_blank()
+    )
+panel2
+```
+
+Supp Figure 3 - Other SSP scenarios
+```{r chunk 9 - Supp Fig 3}
+# show the 2.6 senario. Must run the Figure 3 section first above
+
+map_EPA_delta_26 <- ggplot() +
+  geom_raster(Fig3, mapping = aes(x = x, y = y, fill = delta_EPA_26)) +
+  #scale_fill_steps2(low = "#BC3838", mid = "#FFFFFF",high ="#2F3191",
+                 #   limits = c(-8,2),breaks = -8:2)+
+  #scale_fill_continuous(low = "#BC3838", mid = "#FFFFFF", high = "#2F3191") +
+  scale_fill_gradient2() +
+  guides(fill = guide_colorbar(title = expression(Delta ~ "%EPA"[abs]), barwidth = 13)) +
+  scale_x_continuous(breaks = c(90, 180, 270), labels = c(90, 180, -90)) +
+  geom_polygon(data = mapWorld, aes(x = long, y = lat, group = group), fill = "black", color = "black") +
+  theme_pubclean() +
+  theme(legend.position = "bottom", legend.title = element_text(hjust = 1),
+        axis.title.x = element_blank(),axis.title.y = element_blank())
+
+map_centovercent_2.6 <- ggplot() +
+  geom_raster(Fig3, mapping = aes(x = x, y = y, fill = EPA_26_over_EPA_hist_other*100)) +
+  #scale_fill_continuous(type = "viridis",direction = 1,breaks = breaks,labels = labels,option = "plasma") + 
+  scale_fill_viridis(option = "plasma",direction = -1) +
+  guides(fill = guide_colorbar(
+    title = expression(Delta ~ "%EPA"[rel]),
+    barwidth = 13, position = "right",
+  )) +
+  scale_x_continuous(breaks = c(90, 180, 270), labels = c(90, 180, -90)) +
+  geom_polygon(data = mapWorld, aes(x = long, y = lat, group = group), fill = "black", color = "black") +
+  theme_pubclean() +
+  theme(legend.position = "bottom",
+        legend.title = element_text(hjust = 1),
+        axis.title.x = element_blank(),axis.title.y = element_blank())
+
+cowplot::plot_grid(map_EPA_delta_26,
+                   map_centovercent_2.6,
+                   nrow = 1,
+                   labels = c("A.","B."))
+
+```
+
+Supp Figure 5 - Stacked Bar Graph
+```{r chunk 10 - Supp Fig 5}
+species <- c("DGDG","MGDG","GADG","PC","PE","PG","SQDG","DGTS_DGTA","DGCC")
+
+### EPA calculations 
+Joined[,"EPA_S5_cat"] <- NA
+
+Joined[which((Joined$Total.FA.Double.Bonds*2)<5),"EPA_S5_cat"] <- "<5 Unsaturations" #lipids less than 5db
+
+Joined[which((Joined$Total.FA.Double.Bonds*2)>=5 & # more than 5DB
+                as.numeric(as.factor(Joined$File.MS2.Scans)) != 1 & # that HAVE an ms2 scan
+                is.na(Joined$EPA.Fragment)),"EPA_S5_cat"] <- "MS2, No EPA Fragment" # that ARNT EPA
+
+Joined[which(Joined$EPA.Fragment == TRUE),"EPA_S5_cat"] <- "MS2, EPA Fragment" #lipids with an EPA fragment
+
+Joined[which((Joined$Total.FA.Double.Bonds*2)>=5 & # more than 5DB
+                as.numeric(as.factor(Joined$File.MS2.Scans)) == 1),"EPA_S5_cat"] <- "No MS2 scans" # that DONT HAVE an ms2 scan
+
+### DHA calculations
+
+Joined[,"DHA_S5_cat"] <- NA
+
+Joined[which((Joined$Total.FA.Double.Bonds*2)<6),"DHA_S5_cat"] <- "<6 Unsaturations" #lipids less than 5db
+
+Joined[which((Joined$Total.FA.Double.Bonds*2)>=6 & # more than 5DB
+                as.numeric(as.factor(Joined$File.MS2.Scans)) != 1 & # that HAVE an ms2 scan
+                is.na(Joined$DHA.Fragment)),"DHA_S5_cat"] <- "MS2, No DHA Fragment" # that ARNT DHA
+
+Joined[which(Joined$DHA.Fragment == TRUE),"DHA_S5_cat"] <- "MS2, DHA Fragment" #lipids with an DHA fragment
+
+Joined[which((Joined$Total.FA.Double.Bonds*2)>=6 & # more than 5DB
+                as.numeric(as.factor(Joined$File.MS2.Scans)) == 1),"DHA_S5_cat"] <- "No MS2 scans" # that DONT HAVE an ms2 scan
+
+### Re-arrange and plot
+
+lipid <- Joined_lipid[which(Joined$Species %in% species), which(Joined_metadata$Mixed_Layer == "In Mixed Layer")]
+
+meta <- Joined[which(Joined$Species %in% species), ]
+
+
+samp <- Joined_metadata[which(Joined_metadata$Mixed_Layer == "In Mixed Layer"), ]
+
+pm <- t(t(lipid) / rowSums(t(lipid), na.rm = TRUE))
+pm <- as.data.frame(pm)
+
+plot <- cbind(pm, meta[, c(
+    "Compound.Name", "Total.FA.Double.Bonds",
+    "Total..FA.Carbon.Atoms", "Species", "DHA_S5_cat", "EPA_S5_cat"
+  )])
+
+for_plot <- gather(plot,
+    key = "sample",
+    value = "abs",
+    -Total.FA.Double.Bonds, -Total..FA.Carbon.Atoms,
+    -Compound.Name, -Species, -DHA_S5_cat, -EPA_S5_cat
+)
+
+### Plot DHA
+
+for_plot$legend_title <- factor(for_plot$DHA_S5_cat,levels = c("No MS2 scans",
+                                                               "MS2, DHA Fragment",
+                                                               "MS2, No DHA Fragment",
+                                                               "<6 Unsaturations"))
+plot$legend_title <- plot$DHA_S5_cat
+
+for_plot$sample <- factor(for_plot$sample,levels = samp[order(samp$cruise),"name"])
+for_plot$sample <- factor(for_plot$sample,levels = samp[order(samp$temp),"name"])
+
+for_plot$cruise <- gsub(x = stringr::str_extract(string = for_plot$sample, pattern = "\\..*\\."), pattern = "\\.", replacement = "")
+
+bar_DHA <- ggplot(for_plot,
+                  aes(fill = legend_title,
+                      x = sample,
+                      y = abs)
+                  ) +
+           geom_bar(stat = "identity",width = 1) +
+    ylab("Relative Abundance") +
+    theme_pubclean() +
+    xlab("Mixed Layer Samples") +
+    guides(fill = guide_legend(title = paste("All Species"))) +
+    theme(legend.position = "top",
+          axis.text.y = element_text(size = 10, color = "black"),
+          axis.ticks.x = element_blank(),axis.text.x = element_blank()) +
+  facet_wrap(vars(cruise),scales = "free_x",nrow = 1,)
+
+### Plot EPA
+
+for_plot$legend_title <- factor(for_plot$EPA_S5_cat,levels = c("No MS2 scans",
+                                                               "MS2, EPA Fragment",
+                                                               "MS2, No EPA Fragment",
+                                                               "<5 Unsaturations"))
+plot$legend_title <- plot$EPA_S5_cat
+
+for_plot$sample <- factor(for_plot$sample,levels = samp[order(samp$cruise),"name"])
+#for_plot$sample <- factor(for_plot$sample,levels = samp[order(samp$temp),"name"])
+
+for_plot$cruise <- gsub(x = stringr::str_extract(string = for_plot$sample, pattern = "\\..*\\."), pattern = "\\.", replacement = "")
+
+bar_EPA <- ggplot(for_plot,
+                  aes(fill = legend_title,
+                      x = sample,
+                      y = abs)
+                  ) +
+           geom_bar(stat = "identity",width = 1) +
+    ylab("Relative Abundance") +
+    theme_pubclean() +
+    xlab(" ") +
+    guides(fill = guide_legend(title = paste("All Species"))) +
+    theme(legend.position = "top",
+          axis.text.y = element_text(size = 10, color = "black"),
+          axis.ticks.x = element_blank(),axis.text.x = element_blank()) +
+  facet_wrap(vars(cruise),scales = "free_x",nrow = 1,)
+
+plot_grid(bar_EPA,bar_DHA,labels = c("A.","B."),label_size = 20,ncol = 1)
+```
+
+Figure 2 Supplemental - other lipid temperature correlations.
+```{r chunk 11}
+# Must run Fig 2 chunk first
+### Main windows A-I
+
+# Select wanted species and subset to mixed layer
+# loop <- c("SQDG", "TAG", "DGTS_DGTA", "PE")
+loop <- c("DGCC", "PC", "PG", "MGDG", "DGDG", "GADG", "allmem", "all")
+mixed <- Joined_metadata[which(Joined_metadata$Mixed_Layer == "In Mixed Layer"), ]
+
+# Set Palette ahead of time
+col <- colorRampPalette(colors = c("#BC3838", "#FFFFFF", "#2F3191"))
+colors <- col(length(unique(Joined$Total.FA.Double.Bonds)))
+
+# name the palette
+names(colors) <- as.character(sort(unique(Joined$Total.FA.Double.Bonds)))
+
+Temp_Final_col1 <- list()
+Temp_Final_col2 <- list()
+
+
+# Loop to make all the plots
+for (i in 1:length(loop)) {
+  choosen_species <- loop[i]
+
+  # Calculate linear fit in mixed layer
+  fit <- lm(mixed[, paste(choosen_species, "db_ave", sep = "_")] ~ temp, data = mixed)
+
+  # clean up label to print on figure
+  if (choosen_species == "allmem") {
+    label <- "All Membrane"
+  } else if (choosen_species == "all") {
+    label <- "All Lipids"
+  } else {
+    if (choosen_species == "DGTS_DGTA") {
+      label <- "DGTS/A" # what its is used in the paper
+    } else {
+      label <- choosen_species
+    }
+  }
+
+  # print p-val
+  pval <- pf(summary(fit)$fstatistic[1], summary(fit)$fstatistic[2], summary(fit)$fstatistic[3], lower.tail = F)
+
+  if (pval < 0.001) {
+    pval_to_print <- "p < 0.001"
+  } else {
+    pval_to_print <- pval
+  }
+
+  # plot with mixed and layer and below
+  fin1 <- ggplot(Joined_metadata) +
+    scale_color_manual(values = c("grey60", "red")) +
+    geom_point(
+      data = Joined_metadata[which(Joined_metadata$Mixed_Layer == "In Mixed Layer"), ],
+      aes(temp, Joined_metadata[which(Joined_metadata$Mixed_Layer == "In Mixed Layer"), paste(choosen_species, "db_ave", sep = "_")]),
+      shape = 16,
+      color = "black",size = 1
+    ) +
+    stat_smooth(
+      data = Joined_metadata[which(Joined_metadata$Mixed_Layer == "In Mixed Layer"), ],
+      mapping = aes_string(x = names(fit$model)[2], y = names(fit$model)[1]),
+      method = "lm", col = "red", se = TRUE, level = 0.99
+    ) +
+    stat_cor(
+      data = Joined_metadata[which(Joined_metadata$Mixed_Layer == "In Mixed Layer"), ],
+      mapping = aes(temp,
+        Joined_metadata[which(Joined_metadata$Mixed_Layer == "In Mixed Layer"), paste(choosen_species, "db_ave", sep = "_")],
+        label = c(..rr.label.., pval_to_print)
+      ),
+      label.x = -Inf, label.y = -Inf, vjust = c(-1.8, -0.8), hjust = -0.1, size = 3
+    ) +
+    ggplot2::annotate("text", label = label, Inf, Inf, hjust = 1, vjust = 1,size = 3) +
+    theme_pubr() +
+    theme(
+      axis.title.y = element_blank(),
+      axis.title.x = element_blank(),
+      axis.text.x = element_text(size = 7),
+      axis.text.y = element_text(size = 7),
+      legend.position = "none"
+    )
+
+  if (choosen_species == "allmem") {
+    all <- c("SQDG", "DGDG", "MGDG", "PE", "PC", "PG", "DGCC", "DGTS_DGTA")
+    lipid <- Joined_lipid[which(Joined$Species %in% all), which(Joined_metadata$Mixed_Layer == "In Mixed Layer")]
+    meta <- Joined[which(Joined$Species %in% all), ]
+  } else if (choosen_species == "all") {
+    all <- c("SQDG", "DGDG", "MGDG", "PE", "PC", "PG", "DGCC", "DGTS_DGTA", "TAG")
+    lipid <- Joined_lipid[which(Joined$Species %in% all), which(Joined_metadata$Mixed_Layer == "In Mixed Layer")]
+    meta <- Joined[which(Joined$Species %in% all), ]
+  } else {
+    lipid <- Joined_lipid[which(Joined$Species %in% choosen_species), which(Joined_metadata$Mixed_Layer == "In Mixed Layer")]
+    meta <- Joined[which(Joined$Species %in% choosen_species), ]
+  }
+
+  samp <- Joined_metadata[which(Joined_metadata$Mixed_Layer == "In Mixed Layer"), ]
+
+  pm <- t(t(lipid) / rowSums(t(lipid), na.rm = TRUE))
+  pm <- as.data.frame(pm)
+
+  plot <- cbind(pm, meta[, c(
+    "Compound.Name", "Total.FA.Double.Bonds",
+    "Total..FA.Carbon.Atoms", "Species"
+  )])
+
+  for_plot <- gather(plot,
+    key = "sample",
+    value = "abs",
+    -Total.FA.Double.Bonds, -Total..FA.Carbon.Atoms, -Compound.Name, -Species
+  )
+
+  for_plot$legend_title <- for_plot$Total.FA.Double.Bonds
+  plot$legend_title <- plot$Total.FA.Double.Bonds
+
+  # check corherence
+  identical(colnames(pm)[order(samp$temp)], mixed$name[order(samp$temp)])
+
+  tired1 <- ggplot() +
+    geom_bar(
+      aes(
+        fill = factor(legend_title, levels = names(rev(colors))),
+        x = factor(sample, levels = colnames(pm)[order(samp$temp)]),
+        y = abs
+      ),
+      for_plot,
+      stat = "identity", width = 1
+    ) +
+    xlab("Mixed Layer Samples") +
+    scale_fill_manual(values = colors, drop = FALSE) +
+    ylab("Relative Abundance") +
+    guides(fill = guide_legend(title = paste("All Species"))) +
+    theme(legend.position = "top", axis.text.y = element_text(size = 7, color = "black"))
+
+  legend <- get_legend(tired1 + theme_bw() + theme(legend.position = "top"))
+
+  tired1 <- tired1 +
+    theme(
+      axis.title.x = element_blank(),
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      axis.title.y = element_blank(),
+      axis.text.y = element_text(size = 7, color = "black"),
+      legend.position = "none"
+    )
+
+  tired1 <- tired1 + geom_line(
+    data = mixed,
+    mapping = aes(factor(name, levels = mixed$name[order(samp$temp)]),
+      scales::rescale(temp, from = c(-5, 30), to = c(0, 1)), # to get same range
+      group = 1
+    )
+  ) + scale_y_continuous(
+    name = "Relative Abs",
+    sec.axis = sec_axis(~ scales::rescale(., from = c(0, 1), to = c(-5, 30)),
+      name = "Temp",
+      breaks = c(-5, 0, 10, 20, 30)
+    ),
+    expand = c(0,0)
+  )
+
+  # store
+  Temp_Final_col1[[i]] <- ggplotGrob(fin1)
+  Temp_Final_col2[[i]] <- ggplotGrob(tired1)
+}
+
+Joined_metadata_mix <- Joined_metadata[which(Joined_metadata$Mixed_Layer == "In Mixed Layer"), ]
+
+# make a legend
+legend_contiuous <- ggplot() +
+  geom_point(aes(0:6, 0:6, fill = 0:6)) +
+  guides(fill = guide_colorbar(
+    title = "Unsaturation\nper FA\n", barwidth = 17
+  )) +
+  scale_fill_gradientn(
+    colors = c("#BC3838", "#FFFFFF", "#2F3191"),
+    breaks = seq(0, 6, 0.5),
+  ) +
+  xlab("Mixed Layer") +
+  theme(legend.position = "top")
+
+leg_for_final <- get_legend(legend_contiuous)
+
+aligned <- cowplot::align_plots(
+        Temp_Final_col2[[1]],
+        Temp_Final_col2[[2]],
+        Temp_Final_col2[[3]],
+        Temp_Final_col2[[4]],
+        Temp_Final_col2[[5]],
+        Temp_Final_col2[[6]],
+        Temp_Final_col2[[7]],
+        Temp_Final_col2[[8]],
+        Temp_Final_col1[[1]],
+        Temp_Final_col1[[2]],
+        Temp_Final_col1[[3]],
+        Temp_Final_col1[[4]],
+        Temp_Final_col1[[5]],
+        Temp_Final_col1[[6]],
+        Temp_Final_col1[[7]],
+        Temp_Final_col1[[8]],
+        align = "hv")
+
+# final plot
+fig2_extra <- plot_grid(leg_for_final,
+  ncol = 1,
+  rel_heights = c(2, 20),
+  plot_grid(
+    grid.arrange(
+      plot_grid(
+        aligned[[1]],
+        aligned[[2]],
+        aligned[[3]],
+        aligned[[4]],
+        aligned[[5]],
+        aligned[[6]],
+        ncol = 1,
+        labels = c("A.", "B.", "C.", "D.", "E.", "F."),label_size = 9,
+        hjust = 1, label_y = c(1, 1, 1, 0.21, 0.21, 0.21)
+      ),
+      left = text_grob("Relative Abundance (%)",rot = 90,size = 8),
+      right = text_grob("Temperature (°C)",rot = -90,size = 8),
+      bottom = text_grob("  Mixed Layer Samples",size = 8,vjust = -0.8)
+    ),
+    grid.arrange(
+      plot_grid(
+        aligned[[9]],
+        aligned[[10]],
+        aligned[[11]],
+        aligned[[12]],
+        aligned[[13]],
+        aligned[[14]],
+        ncol = 1,
+        labels = c("G.", "H.", "I.", "J.", "K.", "L."),label_size = 9,
+        hjust = 0, label_y = c(1, 1, 1, 0.21, 0.21, 0.21)
+      ),
+      left = text_grob("Mean Unsaturation per FA",size = 8,rot = 90,vjust = 2),
+      bottom = text_grob("      Temperature (°C)",size = 8,vjust = -0.8)
+    ),
+    nrow = 1
+  )
+)
+
+fig2_extra2 <- plot_grid(leg_for_final,
+  ncol = 1,
+  rel_heights = c(2, 20),
+  plot_grid(
+    grid.arrange(
+      plot_grid(
+        aligned[[7]],
+        aligned[[8]],
+        ncol = 1,
+        labels = c("A.", "B."),label_size = 9,
+        hjust = 1, label_y = c(1, 0.21)
+      ),
+      left = text_grob("Relative Abundance (%)",rot = 90,size = 8),
+      right = text_grob("Temperature (°C)",rot = -90,size = 8),
+      bottom = text_grob("  Mixed Layer Samples",size = 8,vjust = -0.8)
+    ),
+    grid.arrange(
+      plot_grid(
+        aligned[[15]],
+        aligned[[16]],
+        ncol = 1,
+        labels = c("C.", "D."),label_size = 9,
+        hjust = 0, label_y = c(1, 0.21)
+      ),
+      left = text_grob("Mean Unsaturation per FA",size = 8,rot = 90,vjust = 2),
+      bottom = text_grob("      Temperature (°C)",size = 8,vjust = -0.8)
+    ),
+    nrow = 1
+  )
+)
+
+fig2_extra
+fig2_extra2
+
+```
+
+Multiple Linear Model
+```{r chunk 12}
+# must run chunks 5 and 8 to calculate EPA and DHA calculations 
+
+# get mixed layer samples
+mixed <- subset(Joined_metadata,Mixed_Layer == "In Mixed Layer")
+
+# z-score standardization
+zscore <- function(x) {
+  (x - mean(x, na.rm = TRUE)) / sd(x, na.rm = TRUE)
+}
+
+# temperature standardization
+temp_m <- mixed$temp
+
+# fluorescence standardization, drop two outlier values
+#mixed$fluorescence[c(13:14)] <- NA
+flr_m <- sqrt(as.numeric(mixed$fluorescence))
+#flr_m[which(mixed$cruise == "EXPORTS")] <- NA
+
+# depth, salinity, PAR
+depth_m <-mixed$depth
+salinity_m <- as.numeric(mixed$salinity)
+PAR_m <- as.numeric(mixed$PAR)
+sol_m <- mixed$summer_sol_dist
+
+# Nutrients
+NO2_NO3_m <- sqrt(mixed$NO2_NO3)
+#NO2_NO3_m[which(NO2_NO3_m == 'bdl' & mixed$cruise == "SCOPE")] <- 0.006/2
+#NO2_NO3_m[which(NO2_NO3_m == 'bdl' & mixed$cruise == "AE1319")] <- 0.002/2
+#NO2_NO3_m[which(NO2_NO3_m == 'bdl' & mixed$cruise == "KN207_1")] <- 0.010/2
+
+NO2_NO3_m[which(NO2_NO3_m == 0 & mixed$cruise == "SCOPE")] <- 0.006/2
+NO2_NO3_m[which(NO2_NO3_m == 0 & mixed$cruise == "AE1319")] <- 0.002/2
+NO2_NO3_m[which(NO2_NO3_m == 0 & mixed$cruise == "KN207_1")] <- 0.010/2
+
+# build model for all membrane lipids, Check VIF,summarize, diagnostic plots
+allmem_fm <- zscore(mixed$allmem_db_ave) ~ zscore(flr_m) +
+  zscore(depth_m) +
+  zscore(salinity_m) +
+  zscore(NO2_NO3_m) +
+  zscore(PAR_m) +
+  zscore(sol_m) + 
+  zscore(temp_m)
+
+allmem_model <- lm(formula = allmem_fm)
+summary(allmem_model)
+olsrr::ols_vif_tol(allmem_model)
+
+# plot diagnostics
+par(mfrow=c(2,2))
+plot(allmem_model)
+
+# EPA Model, Check VIF,summarize, diagnostic plots
+Percent_EPA_model <- lm(formula = zscore(mixed$Percent_EPA*100) ~ zscore(flr_m) +
+                          zscore(depth_m) +
+                          zscore(salinity_m) +
+                          zscore(NO2_NO3_m) +
+                          zscore(PAR_m) +
+                          zscore(sol_m) +
+                          zscore(temp_m),data = mixed)
+summary(Percent_EPA_model)
+
+# plot diagnostics
+par(mfrow=c(2,2))
+plot(Percent_EPA_model)
+
+# DHA Model, Check VIF,summarize, diagnostic plots
+Percent_DHA_model <- lm(formula = zscore(mixed$Percent_DHA*100) ~ zscore(flr_m) +
+                          zscore(depth_m) +
+                          zscore(salinity_m) +
+                          zscore(NO2_NO3_m) +
+                          zscore(PAR_m) +
+                          zscore(sol_m) +
+                          zscore(temp_m),mixed)
+
+summary(Percent_DHA_model)
+
+par(mfrow=c(2,2))
+plot(Percent_DHA_model)
+
+# Effects plot
+labels <- c("sqrt Fluorescence", "Depth", "Salinity","sqrt NO3+NO2","PAR",
+            "Days since summer soltice","Tempurature")
+
+# final plot
+ggplot(mapping = aes(x = allmem_model$coefficients[-1], y = labels)) +
+  geom_point() +
+  geom_errorbarh(aes(xmin = confint(allmem_model)[-1, 1], xmax = confint(allmem_model)[-1, 2]), height = 0.1) +
+  geom_vline(xintercept = 0, alpha = 0.6, linetype = "dashed") +
+  theme_pubr() + theme(axis.title.x = element_blank()) +
+  scale_x_continuous(position = "top") +
+  labs(y = "CTD Variables") + ggtitle("A)") + 
+  
+  ggplot(mapping = aes(x = Percent_EPA_model$coefficients[-1], y = labels)) +
+  geom_point() +
+  geom_errorbarh(aes(xmin = confint(Percent_EPA_model)[-1, 1], xmax = confint(Percent_EPA_model)[-1, 2]), height = 0.1) +
+  geom_vline(xintercept = 0, alpha = 0.6, linetype = "dashed") +
+  scale_x_continuous(position = "top") +
+  theme_pubr() +
+  theme(axis.text.y = element_blank(), axis.title.y = element_blank()) +
+  labs(x = "Effect (Standardized Coefficents)") + ggtitle("B)") +
+  
+  ggplot(mapping = aes(x = Percent_DHA_model$coefficients[-1], y = labels)) +
+  geom_point() +
+  geom_errorbarh(aes(xmin = confint(Percent_DHA_model)[-1, 1], xmax = confint(Percent_DHA_model)[-1, 2]), height = 0.1) +
+  geom_vline(xintercept = 0, alpha = 0.6, linetype = "dashed") +
+  scale_x_continuous(position = "top") +
+  theme_pubr() +
+  theme(axis.text.y = element_blank(), axis.title.y = element_blank(), axis.title.x = element_blank()) +
+  labs( y = "CTD Variables") + ggtitle("C)")
+  #plot_annotation(tag_levels = "A", tag_suffix = ")",) +
+  #theme(plot.tag = element_text(size = 8, hjust = c(-5,0,0)))
+
+```
+
+Review Response Figures - NO4 and Sal verse EPA and DHA, EPA-MGDG and EPA-DGDG
+```{r}
+n01 <- ggplot(subset(Joined_metadata, Mixed_Layer == "In Mixed Layer"),aes(log10(NO2_NO3), allmem_db_ave)) +
+  geom_point() +
+  theme_pubr() +
+  ylab("Mean Membrane Unsaturation") +
+  xlab(" ") +
+  stat_smooth(method = "lm", col = "red",) +
+  stat_cor(aes(label = c(..rr.label..,..p.label..)),
+           label.x = Inf, label.y = Inf,hjust = 1,vjust=c(1,2.5), size = 4
+           )
+
+n02 <- ggplot(subset(Joined_metadata, Mixed_Layer == "In Mixed Layer"),aes(log10(salinity), allmem_db_ave)) +
+  geom_point() +
+  theme_pubr() +
+  ylab("Average Membrane Unsaturation") +
+  xlab(" ") + stat_smooth(method = "lm", col = "red")+
+  stat_cor(aes(label = c(..rr.label..,..p.label..)),
+           label.x = Inf, label.y = Inf,hjust = 1,vjust=c(1,2.5), size = 4
+           )
+
+n1 <- ggplot(subset(Joined_metadata, Mixed_Layer == "In Mixed Layer"),aes(log10(NO2_NO3), Percent_EPA * 100)) +
+  geom_point() +
+  theme_pubr() +
+  ylab("%EPA containing species") +
+  xlab(" ") + stat_smooth(method = "lm", col = "red")+
+  stat_cor(aes(label = c(..rr.label..,..p.label..)),
+           label.x = Inf, label.y = Inf,hjust = 1,vjust=c(1,2.5), size = 4
+           )
+
+n2 <- ggplot(subset(Joined_metadata, Mixed_Layer == "In Mixed Layer"),aes(log10(NO2_NO3), Percent_DHA * 100)) +
+  geom_point() +
+  theme_pubr() +
+  ylab("%DHA containing species") +
+xlab(expression(paste(paste("log10 "),NO[3]+NO[2],paste(" (umol/L)")))) + stat_smooth(method = "lm", col = "red")+
+  stat_cor(aes(label = c(..rr.label..,..p.label..)),
+           label.x = Inf, label.y = Inf,hjust = 1,vjust=c(1,2.5), size = 4
+           )
+
+n3 <- ggplot(subset(Joined_metadata, Mixed_Layer == "In Mixed Layer"),aes(salinity, Percent_EPA * 100)) +
+  geom_point() +
+  theme_pubr() +
+  ylab(" ") +
+  xlab(" ") +
+  theme(axis.title.y = element_blank()) + stat_smooth(method = "lm", col = "red")+
+  stat_cor(aes(label = c(..rr.label..,..p.label..)),
+           label.x = Inf, label.y = Inf,hjust = 1,vjust=c(1,2.5), size = 4
+           )
+
+n4 <- ggplot(subset(Joined_metadata, Mixed_Layer == "In Mixed Layer"),aes(salinity, Percent_DHA * 100)) +
+  geom_point() +
+  theme_pubr() +
+  ylab(" ") +
+  xlab("Salinity (PSU)") +
+  theme(axis.title.y = element_blank()) + stat_smooth(method = "lm", col = "red")+
+  stat_cor(aes(label = c(..rr.label..,..p.label..)),
+           label.x = Inf, label.y = Inf,hjust = 1,vjust=c(1,2.5), size = 4
+           )
+
+
+library(patchwork)
+(n01 + n02) / (n1 + n3) / (n2 + n4) + plot_annotation(tag_levels = "A", tag_suffix = ")")
+
+# panel DGDG
+lip <- "EPA.Fragment"
+
+# select species
+run <- c("DGDG")
+
+# restrict
+Joined_test <- Joined[which(Joined$Species %in% run), ]
+lipid_test <- Joined_lipid[which(Joined$Species %in% run), ]
+
+Joined_TRUE <- Joined_test[which(Joined_test[, lip] == TRUE), ]
+lipid_TRUE <- lipid_test[which(Joined_test[, lip] == TRUE), ]
+
+# sum EPA species
+sum_con <- colSums(lipid_TRUE, na.rm = TRUE)
+sum <- colSums(lipid_test, na.rm = TRUE)
+df <- data.frame(percent_con = sum_con / sum)
+
+# Add back
+Joined_metadata$Percent_EPA_DGDG <- df$percent_con
+
+n_dgdg <- ggplot(subset(Joined_metadata, Mixed_Layer == "In Mixed Layer")) +
+  geom_point(aes(temp, Percent_EPA_DGDG * 100)) +
+  theme_pubr() +
+  ylab("%EPA containing DGDG") +
+  xlab("Water temperature (°C)") +
+  theme()
+
+# select species
+run <- c("MGDG")
+
+# restrict
+Joined_test <- Joined[which(Joined$Species %in% run), ]
+lipid_test <- Joined_lipid[which(Joined$Species %in% run), ]
+
+Joined_TRUE <- Joined_test[which(Joined_test[, lip] == TRUE), ]
+lipid_TRUE <- lipid_test[which(Joined_test[, lip] == TRUE), ]
+
+# sum EPA species
+sum_con <- colSums(lipid_TRUE, na.rm = TRUE)
+sum <- colSums(lipid_test, na.rm = TRUE)
+df <- data.frame(percent_con = sum_con / sum)
+
+# Add back
+Joined_metadata$Percent_EPA_MGDG <- df$percent_con
+
+n_mgdg <- ggplot(subset(Joined_metadata, Mixed_Layer == "In Mixed Layer")) +
+  geom_point(aes(temp, Percent_EPA_MGDG * 100)) +
+  theme_pubr() +
+  ylab("%EPA containing MGDG") +
+  xlab("Water temperature (°C)")
+
+n_dgdg + n_mgdg + plot_annotation(tag_levels = "A", tag_suffix = ")")
+```
