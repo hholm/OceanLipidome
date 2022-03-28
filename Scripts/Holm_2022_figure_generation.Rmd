@@ -96,6 +96,7 @@ colnames(Joined)[1] <- "Compound.Name"
 
 # Load metadata
 Joined_metadata <- read.csv("C:/Users/henryholm/OneDrive - Woods Hole Oceanographic Institution/Desktop/SNAPL/SNAPL Simplified Dataset/Data/csv/Joined/Holm_global_suspended_metadata_final.csv")
+Joined_metadata <- Joined_metadata[-1,] # drop the first row (units info)
 
 # isolate lipid data
 Joined_lipid <- Joined[,-c(1:19)]
@@ -1277,6 +1278,7 @@ fig2_extra2
 
 Multiple Linear Model
 ```{r chunk 12}
+library(patchwork)
 # must run chunks 5 and 8 to calculate EPA and DHA calculations 
 
 # get mixed layer samples
@@ -1303,13 +1305,9 @@ sol_m <- mixed$summer_sol_dist
 
 # Nutrients
 NO2_NO3_m <- sqrt(mixed$NO2_NO3)
-#NO2_NO3_m[which(NO2_NO3_m == 'bdl' & mixed$cruise == "SCOPE")] <- 0.006/2
-#NO2_NO3_m[which(NO2_NO3_m == 'bdl' & mixed$cruise == "AE1319")] <- 0.002/2
-#NO2_NO3_m[which(NO2_NO3_m == 'bdl' & mixed$cruise == "KN207_1")] <- 0.010/2
-
-NO2_NO3_m[which(NO2_NO3_m == 0 & mixed$cruise == "SCOPE")] <- 0.006/2
-NO2_NO3_m[which(NO2_NO3_m == 0 & mixed$cruise == "AE1319")] <- 0.002/2
-NO2_NO3_m[which(NO2_NO3_m == 0 & mixed$cruise == "KN207_1")] <- 0.010/2
+NO2_NO3_m[which(NO2_NO3_m == 'bdl' & mixed$cruise == "SCOPE")] <- 0.006/2
+NO2_NO3_m[which(NO2_NO3_m == 'bdl' & mixed$cruise == "AE1319")] <- 0.002/2
+NO2_NO3_m[which(NO2_NO3_m == 'bdl' & mixed$cruise == "KN207_1")] <- 0.010/2
 
 # build model for all membrane lipids, Check VIF,summarize, diagnostic plots
 allmem_fm <- zscore(mixed$allmem_db_ave) ~ zscore(flr_m) +
@@ -1358,7 +1356,7 @@ plot(Percent_DHA_model)
 
 # Effects plot
 labels <- c("sqrt Fluorescence", "Depth", "Salinity","sqrt NO3+NO2","PAR",
-            "Days since summer soltice","Tempurature")
+            "Days since summer soltice","Temperature")
 
 # final plot
 ggplot(mapping = aes(x = allmem_model$coefficients[-1], y = labels)) +
@@ -1478,7 +1476,7 @@ Joined_metadata$Percent_EPA_DGDG <- df$percent_con
 n_dgdg <- ggplot(subset(Joined_metadata, Mixed_Layer == "In Mixed Layer")) +
   geom_point(aes(temp, Percent_EPA_DGDG * 100)) +
   theme_pubr() +
-  ylab("%EPA containing DGDG") +
+  ylab("%EPA containing species (DGDG)") +
   xlab("Water temperature (°C)") +
   theme()
 
@@ -1503,7 +1501,7 @@ Joined_metadata$Percent_EPA_MGDG <- df$percent_con
 n_mgdg <- ggplot(subset(Joined_metadata, Mixed_Layer == "In Mixed Layer")) +
   geom_point(aes(temp, Percent_EPA_MGDG * 100)) +
   theme_pubr() +
-  ylab("%EPA containing MGDG") +
+  ylab("%EPA containing species (MGDG)") +
   xlab("Water temperature (°C)")
 
 n_dgdg + n_mgdg + plot_annotation(tag_levels = "A", tag_suffix = ")")

@@ -605,7 +605,7 @@ Joined_metadata[which(Joined_metadata$lat > 0), "summer_sol_dist"] <- as.numeric
 
 Joined_metadata[which(Joined_metadata$summer_sol_dist < 0), "summer_sol_dist"] <- Joined_metadata[which(Joined_metadata$summer_sol_dist < 0), "summer_sol_dist"] + 365
 
-write.csv(Joined_metadata,"C:/Users/henryholm/OneDrive - Woods Hole Oceanographic Institution/Desktop/SNAPL/SNAPL Simplified Dataset/Data/csv/Holm_global_Suspended_metadata_final_3262022.csv")
+#write.csv(Joined_metadata,"C:/Users/henryholm/OneDrive - Woods Hole Oceanographic Institution/Desktop/SNAPL/SNAPL Simplified Dataset/Data/csv/Holm_global_Suspended_metadata_final_3262022.csv")
 ```
 
 Join All Lipid Data (Also Supplementary Figure 6)
@@ -821,13 +821,13 @@ TAGs_ave$ECN <- (TAGs_ave$FA_total_no_C - 2*TAGs_ave$FA_total_no_DB)
 # Plot
 right <- ggplot() + geom_col(aes(y = TAGs_ave$TAGs_ave,x = TAGs_ave$ECN)) +
 xlab("TAG ECN") +
-ylab("Average TAG Peakarea") +
+ylab("Average TAG Peak Area / sample") +
   theme_pubr()
 
 left <- ggplot() +
   geom_point(aes(x,y),data = data) +
   geom_line(aes(20:60,tag_fit(20:60)),color = "black") +
-  ylab("Correction Factor (Peak Area / pgOC)")+ 
+  ylab("Response Factor (Peak Area / pgOC)")+ 
   xlab("ECN") + theme_pubr()
 
 gridExtra::grid.arrange(left,right, nrow = 1)
