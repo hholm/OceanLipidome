@@ -1,5 +1,6 @@
 # Van Mooy Lab Global Ocean Lipidome Dataset
 This repository contains the applicable data and code for the results of the paper "Global ocean lipidomes show a universal relationship between temperature and lipid unsaturation" by Holm et al. 2022. If you have any questions or inquiries about this, please do not hesitate to contact me at hholm@whoi.edu. 
+[![DOI](https://zenodo.org/badge/474821211.svg)](https://zenodo.org/badge/latestdoi/474821211)
 
 ## Screened Data
 #### Sample Naming Convention
