@@ -225,7 +225,6 @@ Load EXPORTS Data and Metadata
 #Load EXPORTS lipid data and metadata
 EXPORTS <- read.csv("C:/Users/henryholm/OneDrive - Woods Hole Oceanographic Institution/Desktop/SNAPL/SNAPL Simplified Dataset/Data/csv/unjoined_PA_data/EXPORTS/Holm_EXPORT_screen.csv") #win
 #bottle_files <- read.csv("C:/Users/henryholm/OneDrive - Woods Hole Oceanographic Institution/Desktop/SNAPL/SNAPL Simplified Dataset/Data/csv/unjoined_PA_data/EXPORTS/RogerRevelleSIOBottleFiles_v6_HH.csv",header = TRUE) #win
-bottle_files <- read.csv("H:/EXPORTS/Pacific_2018/Main_Sheets/RogerRevelleSIOBottleFiles_v6_HH.csv",header = TRUE)
 metadata_lipid <- read.csv("C:/Users/henryholm/OneDrive - Woods Hole Oceanographic Institution/Desktop/SNAPL/SNAPL Simplified Dataset/Data/csv/unjoined_PA_data/EXPORTS/Holm_EXPORTS_screen_metadata.csv") #win
 
 EXPORTS <- LOBtools::LOB_adduct_summary(EXPORTS)
@@ -857,7 +856,9 @@ for (i in 1:length(species)) {
 
 Joined_metadata$recovery <- as.numeric(t(Joined_lipid[which(Joined$species == "DNPPE"),]/980000)) #picograms injected
 
-Joined_metadata[which(Joined_metadata$cruise == "EXPORTS"),"recovery"] <- t(Joined_lipid[which(Joined$species == "DNPPE"),which(Joined_metadata$cruise == "EXPORTS")]/751679.9657) #picograms injected EXPORTS
+#picograms injected EXPORTS and WAP different (Dmix)
+Joined_metadata[which(Joined_metadata$cruise == "EXPORTS"),"recovery"] <- t(Joined_lipid[which(Joined$species == "DNPPE"),which(Joined_metadata$cruise == "EXPORTS")]/375000)
+Joined_metadata[which(Joined_metadata$cruise == "WAP"),"recovery"] <- t(Joined_lipid[which(Joined$species == "DNPPE"),which(Joined_metadata$cruise == "WAP")]/500000)
 
 # Blank Subtraction
 AE1319_blk <- rowMeans(Joined_lipid[, c(
