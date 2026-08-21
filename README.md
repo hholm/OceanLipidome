@@ -1,7 +1,20 @@
 # Van Mooy Lab Global Ocean Lipidome Dataset
-This repository contains the applicable data and code for the results of the paper "Global ocean lipidomes show a universal relationship between temperature and lipid unsaturation" by Holm et al. 2022. If you have any questions or inquiries about this, please do not hesitate to contact me at hholm@whoi.edu. 
+This repository contains untargeted lipid from surface ocean samples across the globe. It was originally created to host data from [Holm *et al.* 2022](https://www.science.org/doi/10.1126/science.abn7455), but has been updated with new data since. As of the latest update, it includes annotated chemical data from 1228 lipid species across 930 samples from the surface ocean.
 
-Version 1.0.2 - 3/28/2022 - [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.7035947.svg)](https://doi.org/10.5281/zenodo.7035947)
+Since version 1.0.2 data is now offered at three levels of processing to aid the user in their own investigation. Latest data can be found in [/Data/csv/Joined/v110/](https://github.com/hholm/OceanLipidome/tree/main/Data/csv/Joined/v110/). Including sample metadata this comprises four files `.csv` files per version. See  [Holm_2022_quantify](https://github.com/hholm/OceanLipidome/blob/main/Scripts/Holm_2022_quantify.Rmd)  for code.
+
+**global_Suspended_metadata_final**: Sample metadata.
+**global_suspended_peakarea**: No corrections or post-processing applied. Units are in peakarea.  
+**global_suspended_pg_oncolumn**: Quantified using standard curves and blank subtracted with field blanks. Units are in picograms.  
+**global_suspended_pg_perLiter**: Quantified using standard curves, blank subtracted with field blanks, recovery corrected with DNP-PE and volume of seawater filtered. Units of picograms per liter.
+
+Convensions are as described below and generally match the format of [LOBSTAHS](https://github.com/vanmooylipidomics/LOBSTAHS) output. If you use data from this dataset in your work please cite the original publication introducing it:
+ >  H. C. Holm, H. F. Fredricks, S. M. Bent, D. P. Lowenstein, J. E. Ossolinski, K. W. Becker, W. M. Johnson, K. Schrage, B. A. S. V. Mooy, Global ocean lipidomes show a universal relationship between temperature and lipid unsaturation. _Science_ **376**, 1487–1491 (2022). 
+ >  [10.1126/science.abn7455](doi.org/10.1126/science.abn7455)
+
+If you have any questions or inquiries about this, please do not hesitate to contact me at hholm@whoi.edu. 
+
+Version 1.1.0 - 8/21/2026 - [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.7035947.svg)](https://doi.org/10.5281/zenodo.7035947)
 
 ## Screened Data
 #### Sample Naming Convention
@@ -26,3 +39,19 @@ All lipid annotations including quantified mass for each sample are available in
 
 ## Raw Files Access
 Raw MS files which are too large to be hosted on GitHub (241.05 GB) are hosted on MetaboLights in the following repository: https://www.ebi.ac.uk/metabolights/MTBLS2838/files
+
+## Associated Publications
+Data from this collection has been featured in the following publications. If you used data from this dataset in published works please message me to be added. 
+
+>  1. H. C. Holm, H. F. Fredricks, S. M. Bent, D. P. Lowenstein, J. E. Ossolinski, K. W. Becker, W. M. Johnson, K. Schrage, B. A. S. V. Mooy,
+> Global ocean lipidomes show a universal relationship between
+> temperature and lipid unsaturation. _Science_ **376**, 1487–1491
+> (2022). [10.1126/science.abn7455](doi.org/10.1126/science.abn7455)
+> 
+>  2. W. Liu, H. C. Holm, J. S. Lipp, H. F. Fredricks, B. A. S. Van Mooy, K.-U. Hinrichs, Unraveling plankton adaptation in global oceans
+> through the untargeted analysis of lipidomes. _Science Advances_
+> **11**, eads4605 (2025). [10.1126/sciadv.ads4605](doi.org/10.1126/sciadv.ads4605)
+>  3. Daniel Lowenstein, Henry Holm, Helen Fredricks et al. Lipid stoichiometry and biomarkers reflect microbial acclimation and
+> nutrient stress across the Atlantic Ocean, 19 November 2025, PREPRINT
+> (Version 1) available at Research Square
+> [10.21203/rs.3.rs-8022751/v1](https://doi.org/10.21203/rs.3.rs-8022751/v1)
