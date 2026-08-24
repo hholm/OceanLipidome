@@ -1,5 +1,5 @@
 # Van Mooy Lab Global Ocean Lipidome Dataset
-This repository contains untargeted lipid from surface ocean samples across the globe. It was originally created to host data from [Holm *et al.* 2022](https://www.science.org/doi/10.1126/science.abn7455), but has been updated with new data since. As of the latest update, it includes annotated chemical data from 1228 lipid species across 930 samples from the surface ocean.
+This repository contains untargeted lipid data from surface ocean samples across the globe. It was originally created to host data from [Holm *et al.* 2022](https://www.science.org/doi/10.1126/science.abn7455), but has been updated with new data since. As of the latest update, it includes annotated chemical data from 1228 lipid species across 930 samples from the surface ocean.
 ![Map of Current Dataset](https://raw.githubusercontent.com/hholm/hholm.github.io/refs/heads/main/images/lipidome_map.png)
 Since version 1.0.2 data is now offered at three levels of processing to aid the user in their own investigation. Latest data can be found in [/Data/csv/Joined/v110/](https://github.com/hholm/OceanLipidome/tree/main/Data/csv/Joined/v110/). Including sample metadata this comprises four files `.csv` files per version. See  [Holm_2022_quantify](https://github.com/hholm/OceanLipidome/blob/main/Scripts/Holm_2022_quantify.Rmd)  for code.
 
