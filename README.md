@@ -3,10 +3,10 @@ This repository contains untargeted lipid data from surface ocean samples across
 ![Map of Current Dataset](https://raw.githubusercontent.com/hholm/hholm.github.io/refs/heads/main/images/lipidome_map.png)
 Since version 1.0.2 data is now offered at three levels of processing to aid the user in their own investigation. Latest data can be found in [/Data/csv/Joined/v110/](https://github.com/hholm/OceanLipidome/tree/main/Data/csv/Joined/v110/). Including sample metadata this comprises four files `.csv` files per version. See  [Holm_2022_quantify](https://github.com/hholm/OceanLipidome/blob/main/Scripts/Holm_2022_quantify.Rmd)  for code.
 
-**global_Suspended_metadata_final**: Sample metadata.
-**global_suspended_peakarea**: No corrections or post-processing applied. Units are in peakarea.  
-**global_suspended_pg_oncolumn**: Quantified using standard curves and blank subtracted with field blanks. Units are in picograms.  
-**global_suspended_pg_perLiter**: Quantified using standard curves, blank subtracted with field blanks, recovery corrected with DNP-PE and volume of seawater filtered. Units of picograms per liter.
+- **global_Suspended_metadata_final**: Sample metadata.
+- **global_suspended_peakarea**: No corrections or post-processing applied. Units are in peakarea.  
+- **global_suspended_pg_oncolumn**: Quantified using standard curves and blank subtracted with field blanks. Units are in picograms.  
+- **global_suspended_pg_perLiter**: Quantified using standard curves, blank subtracted with field blanks, recovery corrected with DNP-PE and volume of seawater filtered. Units of picograms per liter.
 
 Convensions are as described below and generally match the format of [LOBSTAHS](https://github.com/vanmooylipidomics/LOBSTAHS) output. If you use data from this dataset in your work please cite the original publication introducing it:
  >  H. C. Holm, H. F. Fredricks, S. M. Bent, D. P. Lowenstein, J. E. Ossolinski, K. W. Becker, W. M. Johnson, K. Schrage, B. A. S. V. Mooy, Global ocean lipidomes show a universal relationship between temperature and lipid unsaturation. _Science_ **376**, 1487–1491 (2022). 
